@@ -5,6 +5,7 @@ Production-shaped, end-to-end **Enterprise Data Engineering Platform** for e-com
 - **Scope:** 100% Data Platform Engineering (Ingestion, CDC, Streaming, Lakehouse, Warehouse, Orchestration, Governance, Observability, and Cloud IaC).
 - **Scale Target:** `>= 100 GB` offline batch volume across core and extended commerce tables; `200–500 MB/s` sustained throughput (`0.5–1.0 GB/s` peak burst) with full Day-2 maintenance controls (compaction, state TTL, DLQ isolation, and backlog catch-up).
 - **Canonical Docs:**
+  - **Living Step-by-Step Build & Learning Guide:** [docs/runbooks/STEP_BY_STEP_BUILD_GUIDE.md](docs/runbooks/STEP_BY_STEP_BUILD_GUIDE.md)
   - Architecture & Design Decisions: [docs/architecture/PROJECT_SOLUTION.md](docs/architecture/PROJECT_SOLUTION.md)
   - Data Source & Simulation Strategy: [docs/research/DATA_SOURCE_AND_SIMULATION.md](docs/research/DATA_SOURCE_AND_SIMULATION.md)
   - 7-Stage Execution Checklist (100/100 DE Rubric): [docs/roadmap/IMPLEMENTATION_CHECKLIST.md](docs/roadmap/IMPLEMENTATION_CHECKLIST.md)
