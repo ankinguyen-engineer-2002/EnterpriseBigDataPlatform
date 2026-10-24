@@ -9,11 +9,12 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
 
 ---
 
-## Stage 0 — Host Cleanup & Workspace Readiness (Completed)
-- [x] Validate Apple M1 Max host (`10 cores`, `64 GiB RAM`, OrbStack runtime).
+## Stage 0 — Host Cleanup, Workspace & Cloud Tenancy Readiness (Completed)
+- [x] Validate Apple M1 Max host (`10 cores`, `64 GiB RAM`, OrbStack Ubuntu 24.04 ARM64 runtime).
 - [x] Reclaim `41 GiB` SSD by removing legacy `~/.colima` and unused caches (`183 GiB` free SSD verified).
 - [x] Quarantine duplicate coursework archive (`edai-k11-cw*`) into `quarantine/manifest.json`.
-- [ ] Initialize Git repository (`git init -b main`) and create initial commit.
+- [x] Initialize Git repository (`git init -b main`) and push initial commit to GitHub.
+- [x] Register & verify **Oracle Cloud Infrastructure (`Tenancy: CloudBigDataPlatform`, `us-phoenix-1`)** (`41 OCPUs / 277 GB RAM` `A1.Flex` in `PHX-AD-1`, `2 × E2.1.Micro` in `PHX-AD-2`, `200 GB` Free Block Storage), configure `oci-cloud` MCP + `oci-cli` + `terraform`, and scaffold `infra/terraform/oci-always-free/` with `ZRAM zstd` & `Smart Auto-Yield Keepalive`.
 
 ---
 
@@ -55,16 +56,18 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
 - [ ] **4.1 — Spark Baseline vs Optimized Jobs (`R11–R15`: 13 pts):**
   - Implement Bronze (`raw_`) → Silver (`stg_`) Spark jobs on Delta Lake.
   - Capture Spark UI evidence before and after optimizing **Skew** (AQE / Key Salting), **Schema Evolution** (`failure_reason` merge), and **Offline Deduplication** (`2%` `order_items`).
-- [ ] **4.2 — Lakehouse Storage Optimization (`R20`: 3 pts):**
+- [ ] **4.2 — Lakehouse Storage Optimization & Banking Iceberg Interoperability (`R20`: 3 pts):**
   - Apply partitioning, `ZSTD` compression, small-file compaction (`OPTIMIZE`), and `Z-ORDER BY`.
+  - Enable **Delta UniForm (`delta.universalFormat.enabledFormats = 'iceberg'`)** on curated MinIO tables to emit dual `_delta_log/` + `Iceberg metadata/*.json` trees (bridging Spark/Delta coursework requirements with Vietnam Banking `Iceberg + MinIO` standards at zero extra Parquet storage cost).
   - Benchmark file counts, storage footprint, and query read latency before vs after optimization.
 
 ---
 
-## Stage 5 — Dimensional Modeling (`dbt`) & OLAP Warehouse (`ClickHouse`) (13 Rubric Points)
-- [ ] **5.1 — Gold Dimensional & Feature-Ready Models (`R34–R38`: 10 pts):**
-  - Build `dbt` models adhering to naming conventions (`raw_`, `stg_`, `dim_`, `fact_`, `obt_`, `feat_`).
-  - Implement **SCD Type 2** dimensions (`dim_customers`, `dim_products` with `valid_from_ts`, `valid_to_ts`, `is_current`).
+## Stage 5 — Dimensional Modeling (`dbt`), Slim CI & OLAP Warehouse (`ClickHouse`) (13 Rubric Points)
+- [ ] **5.1 — Gold Dimensional, Feature-Ready Models & dbt Slim CI (`R34–R38`: 10 pts):**
+  - Build `dbt` models structured into `staging/`, `intermediate/`, and `marts/` adhering to naming conventions (`raw_`, `stg_`, `dim_`, `fact_`, `obt_`, `feat_`).
+  - Implement **SCD Type 2** dimensions (`dim_customers`, `dim_products` with `valid_from_ts`, `valid_to_ts`, `is_current`) via `dbt snapshot` and custom Jinja macros for **PII Masking** (`SHA-256` hashing on `email`, `phone`, `card_last4` for non-privileged roles).
+  - Configure **dbt Slim CI** (`dbt build --select state:modified+ --defer --state ./prod-run-artifacts`) in `Makefile` and CI workflow using persisted `manifest.json`.
   - Build SQL feature-ready summary table (`feat_customer_order_metrics_90d` with `event_timestamp` and `created_at`).
   - Export ERD diagram across zones via DBeaver.
 - [ ] **5.2 — ClickHouse Warehouse Optimization (`R21`: 3 pts):**
@@ -74,15 +77,19 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
 ---
 
 ## Stage 6 — Pipeline Orchestration (`Airflow`) & Data Governance (`DataHub`) (24 Rubric Points)
-- [ ] **6.1 — Airflow 3 Core Pipelines (`R22–R27`: 12 pts):**
+- [ ] **6.1 — Airflow 3 Core Pipelines & Custom OOP Plugins (`R22–R27`: 12 pts):**
   - Centralize all connections and variables in Airflow.
+  - Develop production-grade Python custom plugins (`WAPReconciliationOperator` and `ClickHousePublishHook` with `pytest` unit tests and type hints).
   - Implement **DP1** (`Raw → Bronze`), **DP2** (`Bronze → Silver → Gold`), and **DP3** (`Compute Offline Feature Table`), each with explicit **Ingest Stage** and **Validate Stage**.
-- [ ] **6.2 — DataHub Lineage & Validation (`R28–R33`: 12 pts):**
+- [ ] **6.2 — DataHub Lineage, PII Governance & Validation (`R28–R33`: 12 pts):**
   - Integrate DataHub with Airflow, Delta Lake, dbt, and ClickHouse.
+  - Register `PII` / `Sensitive` classification tags and access-audit metadata on customer/payment attributes.
   - Capture UI evidence showing end-to-end table lineage and validation assertion results for DP1, DP2, and DP3.
 
 ---
 
-## Stage 7 — Enterprise Operations, Testing, Cloud IaC & 2 Novel Ideas (20 Rubric Points)
-- [ ] **7.1 — Novel Idea #1 (`R39`: 10 pts):** **Write-Audit-Publish (WAP) Zero-Copy Quality Gate** using DuckDB/PyArrow + Delta Lake Time Travel to block invalid data before ClickHouse publication.
-- [ ] **7.2 — Novel Idea #2 (`R40`: 10 pts):** **Sustained Throughput & Time-Compressed Soak Benchmark (`200–500 MB/s` sustained, `0.5–1.0 GB/s` peak)** with automated compaction/TTL maintenance, Prometheus/Grafana/Loki observability, HashiCorp Vault, NGINX Gateway, and Terraform/Ansible cloud deployment.
+## Stage 7 — Enterprise Operations, Migration Reconciliation, Cloud IaC & 2 Novel Ideas (20 Rubric Points)
+- [ ] **7.1 — Novel Idea #1 (`R39`: 10 pts):** **Write-Audit-Publish (WAP) Zero-Copy Quality Gate & Legacy DW Migration Reconciliation** using DuckDB/PyArrow + Delta Lake Time Travel to run parallel reconciliation (`row_count`, `sum_gross_amount`, `distinct_customers`) against a simulated Legacy SQL monolithic report (`legacy_daily_revenue_report`), blocking invalid cutovers and auto-rolling back via `RESTORE TABLE` before ClickHouse publication.
+- [ ] **7.2 — Novel Idea #2 (`R40`: 10 pts):** **Sustained Throughput & Time-Compressed Soak Benchmark (`200–500 MB/s` sustained, `0.5–1.0 GB/s` peak) + Full Enterprise OCI Cloud IaC Promotion:**
+  - Promote the local M1 Max platform to **Oracle Cloud (`CloudBigDataPlatform`, `us-phoenix-1`)** using production Infrastructure-as-Code (`infra/terraform/oci-always-free/` & `oci-hyperscale-burst/`, `Ansible` OS/kernel/K3s bootstrap, `Helm` + `ArgoCD` declarative GitOps).
+  - Deploy edge `NGINX` Gateway, `HashiCorp Vault`, and `Prometheus/Grafana/Loki` observability across `PHX-AD-1` (`VM.Standard.A1.Flex` ARM64) and `PHX-AD-2` (`2 × VM.Standard.E2.1.Micro`), run the high-rate soak/burst benchmark with automated compaction/TTL maintenance, and keep the Always Free cluster running permanently at `$0/month`.

@@ -336,10 +336,11 @@ No researched repository removed the need for an owned generator, a company-data
    - Daily coding runs at `PROFILE=dev` (`1–2 GB`, `<10s`).
    - Rubric `>=100 GB` verification runs in `250–500 MB` streaming PyArrow/DuckDB/Spark chunks (`<6 GiB RAM`, 3–6 min) with **Rolling Stage Cleanup** (Raw `100 GB` → Bronze `ZSTD` compressed `~25–35 GB` → delete temporary Raw `100 GB` before Silver/Gold).
    - Local high-rate burst (`0.6–1.2 GB/s`, `50–100 TB/day` equivalent) uses hard circuit breakers (`--max-seconds 10 --max-gb 2`) and Kafka `retention.ms=10000` + `lz4` compression (`0 GB` permanent disk growth).
-4. **Ephemeral Hyperscale Cloud Raid (`1/5–1/3 PB/day` = `2.3–3.8 GB/s`) & `$0` Cloud Policy:**
-   - Provisioned via Terraform on **GCP Free Trial (`$300` Credit / 90 days)** using a personal Gmail + Vietnam Visa/Mastercard Debit card (`~50,000 VND` for initial `$1` verification hold, then zeroed out; kept in `Free Trial` state).
-   - Strictly isolated from corporate Azure (`NAric@ashleyfurniture.com` / `DATAWAREHOUSE PROD` `8e606065-9e63-4319-ba39-0ff434c72b39`).
-   - Runs 3–5 Kafka KRaft / Redpanda brokers + Spark/Flink on GCP Spot VMs + Local NVMe SSD (or `3–4 × n2-standard-8` within default trial quota) inside a **single GCP Zone** over **Internal Private IP** (`$0/GB` egress), protected by `sudo shutdown -h +45` and immediate `terraform destroy` (`~$1.50–$3.00` credit per 20-min run).
+4. **Permanent Always Free Cloud & Ephemeral Hyperscale Cloud Raid (`200–500 MB/s` sustained, `0.5–1.0 GB/s` peak) on Oracle Cloud (`us-phoenix-1` — 100% Self-Managed on Raw VMs, Zero Managed Services):**
+   - Provisioned via Terraform (`oracle/oci` provider) on **Oracle Cloud Infrastructure (`Tenancy: CloudBigDataPlatform`, Home Region: `us-phoenix-1`)**, verified live via `oci-cloud` MCP (`41 OCPUs / 277 GB RAM` `VM.Standard.A1.Flex` in `UHSM:PHX-AD-1`, `2 × VM.Standard.E2.1.Micro` in `UHSM:PHX-AD-2`, `200 GB` `20-VPU` Raw Block Storage).
+   - **Strict Zero-Managed-Service Rule:** Only raw IaaS primitives (`VCN`, `Subnet`, `Security List`, raw Ubuntu 24.04 VMs, and raw `20-VPU` Block Volumes) are used. Every platform service (`K3s`, `MinIO`, `PostgreSQL 16`, `Kafka KRaft`, `Debezium`, `Flink`, `Spark`, `ClickHouse`, `Airflow 3`, `DataHub`, `Vault`, `NGINX`, `Prometheus/Grafana/Loki`, `ArgoCD`) is 100% self-hosted on raw Linux VMs — no managed PaaS/SaaS (`Autonomous DB`, `OKE`, `OCI Object Storage`, etc.).
+   - Strictly isolated from corporate Azure (`NAric@ashleyfurniture.com` / `DATAWAREHOUSE PROD` `8e606065-9e63-4319-ba39-0ff434c72b39`) and kept in the `Free Tier account` state so out-of-pocket card charges are `$0.00`.
+   - Permanent staging runs `VM.Standard.A1.Flex` (`ARM64` matching local M1 Max 1:1) + `2 × E2.1.Micro` edge nodes with `ZRAM zstd` and `Smart Auto-Yield Keepalive`; ephemeral multi-node K3s HA & soak benchmarks use the `$300` Free Trial credit pool inside the private VCN subnet (`10.20.0.0/16`, `$0/GB` internal traffic) followed by `terraform destroy` on burst nodes.
 5. **External public dumps (`Olist`, `Open CDP`, `NYC TLC`, `Amazon Reviews 2023`, `TPCx-BB`):** Retained in documentation as optional reference benchmarks only; none are required to complete the canonical Gold, ML, or RAG path.
 
 These decisions are now part of the accepted catalog. Change them in `PROJECT_SOLUTION.md`, not by quietly adding another dataset to Compose.
@@ -353,7 +354,7 @@ These decisions are now part of the accepted catalog. Change them in `PROJECT_SO
 - Do not put NYC Taxi trips into commerce facts.
 - Do not treat 30 years of OLTP as proof of daily ingest.
 - Do not persist 4 copies of `100 GB` simultaneously on the `214 GiB` local SSD without rolling stage cleanup.
-- Do not use Oracle Cloud Free Tier (`VM.Standard.A1.Flex`) as the primary target due to regional `Out of Host Capacity` bottlenecks and 30-day credit expiry.
+- Do not choose congested Asia-Pacific regions (`Singapore`/`Tokyo`) for Oracle Cloud Free Tier; use `us-phoenix-1` (`CloudBigDataPlatform`) where `41 OCPUs / 277 GB RAM` ARM64 capacity is verified available.
 
 ## Evidence limits
 

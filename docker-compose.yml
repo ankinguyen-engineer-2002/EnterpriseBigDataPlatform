@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: edp_postgres
+    restart: unless-stopped
+    command: >
+      postgres -c wal_level=logical
+               -c max_wal_senders=10
+               -c max_replication_slots=10
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-edp_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edp_secret_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-commerce_oltp}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edp_admin} -d ${POSTGRES_DB:-commerce_oltp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edp_network
+
+  minio:
+    image: alpine/minio:RELEASE.2025-10-15T17-29-55Z
+    container_name: edp_minio
+    restart: unless-stopped
+    entrypoint: >
+      /bin/sh -c "
+      mkdir -p /home/minio/raw /home/minio/bronze /home/minio/silver /home/minio/gold /home/minio/checkpoints &&
+      exec minio server /home/minio --console-address ':9001'
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secret_2026}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/home/minio
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edp_network
+
+networks:
+  edp_network:
+    name: edp_network
+    driver: bridge
+
+volumes:
+  pg_data:
+    name: edp_pg_data
+  minio_data:
+    name: edp_minio_data

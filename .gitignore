@@ -18,6 +18,8 @@ venv/
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfvars
+!*.tfvars.example
 crash.log
 
 # Local data and runtime state

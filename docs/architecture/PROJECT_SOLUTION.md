@@ -62,71 +62,77 @@ The project uses a three-source realism strategy. Public datasets and determinis
 ## Target architecture
 
 ```mermaid
-flowchart LR
-    subgraph Sources
-        OLTP[(PostgreSQL / MySQL)]
-        API[REST and SaaS APIs]
-        FILES[SFTP and object files]
-        EVENTS[Web, mobile, and payment events]
+flowchart TB
+    subgraph L1["1. SOURCE & LEGACY LAYER"]
+        FASTAPI["FastAPI Order Service\n(Pydantic Validation)"]
+        DATAGEN["Vectorized Data Generator\n(PyArrow/DuckDB: >=100GB Batch + Stream)"]
+        PG[("PostgreSQL 16 OLTP\n(wal_level=logical + Indexes)")]
+        LEGACY["Legacy Monolithic Report\n(legacy_daily_revenue_report SQL)"]
+        FASTAPI --> PG
+        DATAGEN --> PG
+        PG --> LEGACY
     end
 
-    subgraph Ingestion[Ingestion platform]
-        ADAPTER[Source adapters]
-        CDC[Debezium CDC]
-        CONTRACT[Schema and data contracts]
-        KAFKA[(Kafka)]
-        DLQ[(Dead-letter queues)]
-        RAW[Immutable raw landing]
+    subgraph L2["2. INGESTION & TRANSPORT LAYER"]
+        CDC["Debezium CDC Connector"]
+        CONTRACT["Schema & Data Contracts\n(Inject: Skew 80%, Late 5-10m, Dup 1.5-2%, Schema Evol)"]
+        KAFKA[("Apache Kafka (KRaft)\nPartitioned Topics")]
+        DLQ[("Dead-Letter Queue (DLQ)\nPoison Messages Isolation")]
+        PG -->|WAL Stream| CDC --> CONTRACT
+        DATAGEN -->|Clickstream & Callbacks| CONTRACT
+        CONTRACT -->|Valid| KAFKA
+        CONTRACT -->|Invalid| DLQ
     end
 
-    subgraph Processing[Processing plane]
-        FLINK[Flink streaming]
-        SPARK[Spark batch and backfill]
+    subgraph L3["3. DISTRIBUTED PROCESSING & MEDALLION LAKEHOUSE (MinIO S3 + Delta Lake)"]
+        RAW[("MinIO: s3://raw\n(Immutable Landing)")]
+        FLINK["Apache Flink (Streaming)\n• Watermarks & Side Outputs (Late 5-10m)\n• KeyedProcessFunction + StateTTL (1.5% Dup)\n• Event-Time Tumbling/Sliding Windows"]
+        BRONZE[("Delta Lake: Bronze (raw_)\nAppend-only History")]
+        SPARK["Apache Spark (Batch Engine)\n• Skew Optimization (AQE / Key Salting)\n• Schema Evolution Merge (failure_reason)\n• Offline Dedup (2%) + OPTIMIZE & Z-ORDER"]
+        SILVER[("Delta Lake: Silver (stg_)\nCleaned & Conformed")]
+
+        DATAGEN -->|Bulk Parquet| RAW --> SPARK
+        KAFKA --> FLINK --> BRONZE
+        KAFKA --> SPARK
+        BRONZE --> SPARK --> SILVER
     end
 
-    subgraph Lakehouse[Lakehouse]
-        BRONZE[(Bronze)]
-        SILVER[(Silver)]
-        GOLD[(Gold)]
+    subgraph L4["4. MODELING, FINTECH GOVERNANCE & WAP GATE"]
+        DBT["dbt Core (Advanced)\n• staging / intermediate / marts\n• SCD Type 2 (dbt snapshot: dim_customers, dim_products)\n• Jinja PII Masking (SHA-256 email/phone/card)\n• Feature Table (feat_customer_order_metrics_90d)\n• Slim CI (state:modified+ via manifest.json)"]
+        GOLD[("Delta Lake: Gold\n(dim_, fact_, obt_, feat_)")]
+        WAP{"WAP Zero-Copy & Migration\nReconciliation Gate\n(DuckDB / PyArrow)"}
+        ROLLBACK["Auto Rollback\n(Delta RESTORE TABLE)"]
+
+        SILVER --> DBT --> GOLD
+        GOLD --> WAP
+        LEGACY -.->|Parallel Run Compare:\nrow_count, sum_amount| WAP
+        WAP -->|Delta != 0 (Fail)| ROLLBACK --> GOLD
     end
 
-    subgraph Serving[Analytics serving]
-        DBT[dbt models and tests]
-        OLAP[(ClickHouse or warehouse)]
-        BI[BI and analytical consumers]
-        DATAAPI[Data access API]
+    subgraph L5["5. OLAP SERVING WAREHOUSE"]
+        CH[("ClickHouse OLAP\n• MergeTree / ReplacingMergeTree\n• Primary/Sorting Keys\n• Data Skipping Indexes & Materialized Views")]
+        BI["BI & Analytical Consumers"]
+        DATAAPI["Data Access API"]
+        WAP -->|Delta == 0 (Cutover Pass)| CH
+        CH --> BI
+        CH --> DATAAPI
     end
 
-    subgraph Control[Control plane]
-        AIRFLOW[Airflow]
-        DATAHUB[DataHub]
-        QUALITY[Quality gates]
-        OBS[Prometheus, Grafana, and OpenTelemetry]
+    subgraph L6["6. CONTROL, GOVERNANCE & INFRA/GITOPS PLANE"]
+        AIRFLOW["Apache Airflow 3\n• DAGs: DP1, DP2, DP3 (Ingest + Validate)\n• Custom OOP Plugins: WAPReconciliationOperator,\n  ClickHousePublishHook (pytest tested)"]
+        DATAHUB["DataHub Catalog\n• End-to-End Lineage\n• PII Classification Tags\n• Quality Assertions"]
+        OBS["Observability & Security\n• Prometheus + Grafana + Loki\n• HashiCorp Vault + NGINX"]
+        INFRA["IaC & GitOps Runtime\n• Multi-stage Dockerfile (>60% reduction)\n• Docker Compose (Local OrbStack ARM64)\n• K3s Helm/ArgoCD + Terraform/Ansible\n  (OCI us-phoenix-1 Always Free & Burst)"]
     end
 
-    OLTP --> CDC
-    API --> ADAPTER
-    FILES --> ADAPTER
-    EVENTS --> ADAPTER
-    CDC --> CONTRACT
-    ADAPTER --> CONTRACT
-    CONTRACT --> KAFKA
-    CONTRACT --> RAW
-    CONTRACT --> DLQ
-    KAFKA --> FLINK --> BRONZE
-    RAW --> SPARK
-    BRONZE --> SPARK --> SILVER
-    SILVER --> DBT --> GOLD
-    GOLD --> OLAP
-    OLAP --> BI
-    OLAP --> DATAAPI
-    AIRFLOW -. submits and validates .-> SPARK
-    AIRFLOW -. manages .-> FLINK
-    AIRFLOW -. runs .-> QUALITY
-    DBT -. publishes lineage .-> DATAHUB
-    KAFKA -. emits metrics .-> OBS
-    SPARK -. emits metrics .-> OBS
-    FLINK -. emits metrics .-> OBS
+    AIRFLOW -.->|Orchestrates| SPARK
+    AIRFLOW -.->|Orchestrates| DBT
+    AIRFLOW -.->|Triggers| WAP
+    DATAHUB -.->|Tracks Lineage & PII| GOLD
+    DATAHUB -.->|Tracks Lineage| CH
+    KAFKA -.->|Metrics| OBS
+    SPARK -.->|Metrics| OBS
+    FLINK -.->|Metrics| OBS
 ```
 
 The main path uses one lakehouse table format. The coursework-aligned first implementation uses Delta Lake; the table access layer remains isolated so a future Iceberg or Hudi migration is possible without rewriting source adapters and business contracts. The main path must not run multiple table formats simultaneously.
@@ -171,6 +177,28 @@ s3://lake/commerce_hudi/orders/
 ```
 
 The storage backend is still MinIO. The format-specific files provide table semantics. A catalog such as a filesystem/path catalog, Hive Metastore, REST catalog, Nessie, or a cloud catalog registers the table for engines such as Spark, Flink, and Trino. These are separate choices: storage backend, table format, catalog, and compute/query engine should not be conflated.
+
+#### Why Banking / BFSI in Vietnam prefers `Apache Iceberg + MinIO` vs `Delta Lake` — and how this project bridges both via `Delta UniForm`
+
+In the 2025–2026 Vietnamese Banking & Financial Services (BFSI) market (Vietcombank, Techcombank, MB, VPBank, ACB, TPBank), Senior Data Engineer JDs heavily emphasize **`Apache Iceberg + MinIO`** alongside `Spark`, `Flink`, and `Trino/Dremio` for four concrete architectural and regulatory reasons:
+
+| Dimension | Why Banking / On-Prem BFSI chooses `Apache Iceberg + MinIO` | Why `Delta Lake` is chosen for Spark/Databricks-first stacks |
+|---|---|---|
+| **1. Regulatory & Vendor Neutrality (SBV & Decree 13 / PDPD)** | Core banking, card, and credit data must reside on-premises (`MinIO` / Ceph S3). `Iceberg` (originated at Netflix/Apple, governed 100% by Apache) is strictly vendor-neutral with zero commercial cloud lock-in. | `Delta Lake` is tightly coupled with the Databricks ecosystem; on-premise banks avoid tying long-term storage governance to a single commercial cloud vendor. |
+| **2. Multi-Engine First-Class Support (`Spark` + `Flink` + `Trino/Dremio`)** | Banks migrating off legacy Cloudera (Hadoop/Hive) rely on `Trino` or `Dremio` for federated BI SQL and `Flink` for real-time fraud streaming, where `Iceberg` ACID reads/writes (`MERGE`, `DELETE`) are first-class. | `Delta Lake` is deepest and fastest inside `Apache Spark`, whereas non-Spark engines historically treated `Iceberg` as their primary open table target. |
+| **3. `Partition Evolution` & `Hidden Partitioning`** | Multi-year banking transaction tables (`10+ years`, tens of TBs) can evolve partitioning (e.g., from `month(txn_ts)` to `day(txn_ts)`) solely in metadata **without rewriting historical Parquet files** or changing SQL queries. | Changing physical partition keys in traditional `Delta Lake` or Hive tables requires rewriting existing historical data files. |
+| **4. Centralized Catalog Security (`REST Catalog / Nessie / Ranger`)** | `Iceberg` enforces all commits through a catalog pointer (`metadata.json -> Manifest List -> Manifest File`), integrating cleanly with **Apache Ranger / OPA** for row/column-level banking security and Git-like branching (`Nessie`). | Standalone `Delta Lake` tracks state directly in `_delta_log/*.json` on the filesystem unless paired with Unity Catalog. |
+
+**Architectural Bridge (`Delta UniForm` — One Storage Copy, Dual Protocol Compatibility):**
+Because both `Delta Lake` and `Apache Iceberg` write immutable `ZSTD`-compressed **Apache Parquet** data files on `MinIO` and differ only in their JSON/Avro metadata envelopes, this platform satisfies **100% of the coursework `Delta Lake` rubric** while simultaneously supporting **Banking `Apache Iceberg` compatibility** by enabling **Delta Universal Format (`UniForm`)** on curated tables in Stage 4:
+
+```sql
+ALTER TABLE silver.stg_orders SET TBLPROPERTIES (
+  'delta.universalFormat.enabledFormats' = 'iceberg'
+);
+```
+
+Whenever Spark commits a transaction to `_delta_log/`, `UniForm` asynchronously generates the corresponding `metadata/*.json` and manifest tree for `Apache Iceberg` in the same `MinIO` table directory (`0%` duplicate Parquet data cost, `100%` interoperability with both Spark/Delta and Trino/Iceberg banking architectures).
 
 ### What MinIO provides and does not provide
 
@@ -427,7 +455,20 @@ The first pipelines are:
 2. Bronze to Silver and Gold.
 3. Offline feature-ready table computation.
 
-Connections, variables, retries, schedules, validation, backfill parameters, and alert routing live in Airflow configuration rather than being hard-coded into jobs.
+Connections, variables, retries, schedules, validation, backfill parameters, and alert routing live in Airflow configuration rather than being hard-coded into jobs. Reusable orchestration logic is packaged as typed, unit-tested custom Airflow Operators and Hooks (`WAPReconciliationOperator`, `ClickHousePublishHook`) rather than ad-hoc shell scripts.
+
+### dbt Slim CI, PII Masking, and Legacy DW Migration Reconciliation
+
+To align with enterprise financial/fintech engineering standards without adding runtime memory bloat:
+
+1. **dbt Layered Architecture & Slim CI (`state:modified+`):**
+   - Models are organized into `staging/`, `intermediate/`, and `marts/` with `dbt snapshot` enforcing SCD Type 2 history (`valid_from_ts`, `valid_to_ts`, `is_current`).
+   - CI pipelines persist `target/manifest.json` from the last successful production run and execute `dbt build --select state:modified+ --defer --state ./prod-run-artifacts` so pull requests rebuild and test only modified models and their downstream dependents.
+2. **PII Classification & Masking:**
+   - Reusable Jinja macros apply deterministic `SHA-256` hashing or masking to sensitive customer and payment fields (`email`, `phone`, `card_last4`) in analytical marts while tagging PII columns in DataHub for compliance auditing.
+3. **Legacy DW Parallel Run, Reconciliation, Cutover & Rollback (WAP Gate):**
+   - A monolithic SQL report in PostgreSQL (`legacy_daily_revenue_report`) simulates a legacy data warehouse workload during platform migration.
+   - Before cutting over Gold tables to ClickHouse, the Write-Audit-Publish (WAP) gate runs a zero-copy DuckDB/PyArrow reconciliation comparing legacy SQL outputs against the new Gold mart (`row_count`, `sum_gross_amount`, `distinct_customers`). Any discrepancy ($\|\Delta\| > 0$) aborts publication and triggers an automatic Delta Lake Time Travel rollback (`RESTORE TABLE`).
 
 ## Governance, quality, and observability
 
@@ -464,30 +505,30 @@ Logs and traces are added with OpenTelemetry as the platform grows. A dashboard 
 ## Infrastructure, Kubernetes, and Terraform
 
 ```text
-Terraform
-  ├── Network, IAM, firewall, DNS
-  ├── Object storage and container registry
-  ├── VM or managed Kubernetes cluster
-  └── Node pools, storage classes, and cloud policies
+Terraform (Raw IaaS Primitives Only — Zero Managed PaaS/SaaS)
+  ├── Network (VCN, Subnets, Route Tables, Internet Gateway, Security Lists)
+  ├── Raw Compute VMs (Ubuntu 24.04 LTS: ARM64 A1.Flex & AMD64 E2.1.Micro)
+  └── Raw Block Volumes (20–120 VPU ISCSI/Paravirtualized Disks)
 
 Ansible
-  └── Ubuntu and self-managed K3s bootstrap
+  └── Ubuntu OS hardening, sysctl, ZRAM (zstd), and self-managed K3s bootstrap
 
-Helm and operators
-  ├── Kafka/Strimzi
-  ├── Flink operator
-  ├── Spark jobs or operator
-  ├── Airflow
-  └── Monitoring and ingress
+Helm, ArgoCD, and Kubernetes Operators (100% Self-Hosted Open-Source)
+  ├── Storage & OLTP: Self-hosted MinIO S3 + PostgreSQL 16 (WAL logical)
+  ├── Streaming: Kafka (KRaft) / Strimzi + Debezium CDC + Flink Operator
+  ├── Batch & Lakehouse: Spark Operator + Delta Lake / Apache Iceberg (UniForm)
+  ├── Modeling & Serving: dbt Core + Self-hosted ClickHouse OLAP
+  ├── Control & Governance: Airflow 3 + DataHub Catalog
+  └── Security & Observability: HashiCorp Vault + NGINX TLS + Prometheus/Grafana/Loki
 
 CI/CD
-  └── Test, build, scan, publish, and deploy images
+  └── Test, build, scan, publish, and deploy multi-stage ARM64/AMD64 images
 
-Airflow
-  └── Execute data pipelines and maintenance jobs
+Airflow 3
+  └── Execute data pipelines, WAP reconciliation gates, and maintenance jobs
 ```
 
-Terraform owns infrastructure and persistent platform boundaries. Helm or operators own Kubernetes applications. CI/CD owns application release. Airflow owns data execution. Terraform must not manage individual task runs or data rows.
+Terraform owns raw infrastructure boundaries (Network, VMs, Block Volumes). Ansible owns host OS and self-managed K3s cluster bootstrapping. Helm/ArgoCD and operators own Kubernetes stateful/stateless applications. CI/CD owns application release. Airflow owns data execution. **Strict Zero-Managed-Service Rule:** The project intentionally rejects managed cloud PaaS/SaaS ("instant-noodle" services such as OKE, GKE, EKS, Autonomous Database, RDS, Cloud SQL, Confluent/MSK, Dataproc, BigQuery, or managed S3/GCS replacing MinIO). Every single engine in the stack is self-deployed, self-configured, and self-operated on raw Linux VMs and raw Block Volumes.
 
 The deployment progression is:
 
@@ -589,40 +630,45 @@ OrbStack may be used throughout local development, integration testing, failure 
 The project uses a staged environment model. The stages are compatible deployment targets, not four systems that must run continuously at the same time.
 
 ```text
-Local development
-  macOS + OrbStack + Docker Compose
+Local development (100% Self-Hosted Containers)
+  macOS M1 Max + OrbStack (Ubuntu 24.04 ARM64) + Docker Compose
         ↓
-Remote Linux lab
-  Ubuntu VPS + K3s (single node, self-managed, not HA)
+Permanent Cloud Staging & Production-Shaped Lab ($0 Forever — Zero Managed Services)
+  Oracle Cloud Always Free Raw IaaS (us-phoenix-1):
+  • AD-1: VM.Standard.A1.Flex (ARM64, 2–4 OCPU, 12–24 GB RAM + ZRAM, 200 GB 20-VPU Raw Block Volume)
+          Self-managed K3s + MinIO + PostgreSQL 16 + Kafka/Debezium + Flink + Spark + ClickHouse + Airflow + DataHub
+  • AD-2: 2 × VM.Standard.E2.1.Micro (AMD64 Raw VMs: Self-managed Edge NGINX TLS / Vault / Prometheus / Grafana / Loki)
         ↓
-Advanced infrastructure lab
-  Three cloud VMs + K3s HA (self-managed multi-node cluster)
-        ↓
-Cloud production evolution
-  GKE or EKS (managed Kubernetes control plane)
+Ephemeral Multi-Node HA & Hyperscale Burst Lab ($300 Trial Credit — Raw VMs Only)
+  Oracle Cloud us-phoenix-1 (up to 41 OCPU / 277 GB RAM verified quota across PHX-AD-1/2/3):
+  • 3-Node Self-Managed K3s HA Cluster (Embedded etcd Quorum across AD-1/2/3)
+  • Distributed MinIO / Kafka / Flink / Spark Soak & Burst (200–500 MB/s sustained, 0.5–1.0 GB/s peak)
 ```
 
-The local environment is the daily development and data-volume environment. It runs the complete functional path with small-to-large synthetic profiles, including ingestion, CDC, Kafka, raw landing, Delta Lake, processing, dbt, serving, quality, replay, and failure tests. The Mac's 64 GB RAM and an external NVMe disk are used for large local data campaigns; cloud storage is not rented merely to generate bulk test data.
+The local environment is the daily development and data-volume environment. It runs the complete functional path with small-to-large synthetic profiles, including ingestion, CDC, Kafka, raw landing, Delta Lake, processing, dbt, serving, quality, replay, and failure tests. Because both the Apple M1 Max (`arm64`) and Oracle Cloud Ampere Altra (`VM.Standard.A1.Flex` `aarch64`) share the exact same ARM64 instruction set, multi-stage Docker images built locally deploy 1:1 to the cloud without cross-compilation or QEMU emulation overhead.
 
-The remote lab is introduced after the local foundation is reliable. A small Ubuntu VPS is used to learn and verify Terraform, SSH, Ansible, firewall rules, persistent disks, container deployment, K3s, CI/CD, backup, restore, rollback, and remote operations. A single VPS with K3s is production-shaped staging, not high availability: losing that VPS loses the cluster unless recovery has been tested.
+The permanent remote staging lab runs on **Oracle Cloud Infrastructure (`Tenancy: CloudBigDataPlatform`, Home Region: `us-phoenix-1`)**, provisioned end-to-end as production-grade Infrastructure-as-Code (`Terraform` + `Ansible` + `K3s` + `Helm`/`ArgoCD`) and inspected via the official `oracle.oci-cloud-mcp-server` MCP & `oci-cli`. Instead of treating the cloud as a manual console click-fest, the promotion from local Mac development to Oracle Cloud rebuilds the full infrastructure stack (VCN, public/private subnets, route tables, security lists, non-root SSH hardening, `ZRAM zstd` memory compression, `Smart Auto-Yield Keepalive`, K3s GitOps, and ingress TLS) exactly as an enterprise platform engineering team operates in production.
 
-The three-VM K3s environment is an advanced, temporary lab. It is created with Terraform only for campaigns that require node failure, quorum, scheduling, rolling deployment, or multi-node storage experiments, then destroyed after measurements are captured. Three K3s server/control-plane nodes are required for an embedded-etcd HA control plane; replicas on one VM do not provide HA.
+The three-VM K3s HA & Hyperscale Burst environment is an advanced, temporary campaign lab provisioned via Terraform across `UHSM:PHX-AD-1`, `PHX-AD-2`, and `PHX-AD-3` using the active `$300` trial credit pool (`41 OCPUs` and `277 GB RAM` verified available in `PHX-AD-1`) for node-failure quorum tests and the Stage 7.2 (`200–500 MB/s` sustained, `0.5–1.0 GB/s` peak) soak benchmark, then destroyed via `terraform destroy` so the permanent `Always Free` cluster continues running at `$0/month` indefinitely.
 
-Google Cloud Compute Engine with self-managed Ubuntu and K3s/Kubernetes is the primary cloud-evolution target for this project. This keeps the operating model visible: Terraform creates VMs and networks, Ansible configures Ubuntu, and the project operates the cluster and stateful services. Multiple cloud VMs provide a more scalable failure domain than a single VPS while preserving the mechanics that a managed service would hide.
+Oracle Cloud Infrastructure (`us-phoenix-1`) with self-managed Ubuntu 24.04 LTS and self-hosted K3s is the primary cloud target for this project. This keeps the operating model 100% transparent and under our direct engineering control: Terraform (`oracle/oci` provider) provisions **only raw IaaS primitives** (VCNs, Security Lists, `20 VPU` Block Volumes, and bare Ubuntu Compute VMs); Ansible configures Ubuntu, kernel sysctls, ZRAM, and K3s; and Helm/ArgoCD reconciles the stateful data platform services.
 
-Managed services such as GKE, Cloud SQL, managed Kafka, GCS, BigQuery, Dataproc, and Dataflow are optional comparison or migration experiments, not dependencies of the main implementation. They may be introduced later when a measured reliability, scale, or operating-cost requirement justifies them. AWS EC2/EKS/S3 and Azure VM/AKS/ADLS remain valid comparison targets when a course or job requires them; they are not deployed in parallel without a concrete reason.
+**Strict Zero-Managed-Service Policy (No Cloud PaaS/SaaS Crutches):** This project enforces a hard architectural ban on managed cloud services (no OKE/GKE/EKS managed Kubernetes, no Autonomous Database/RDS/Cloud SQL, no managed Kafka/MSK, no BigQuery/Snowflake, no Dataproc/Dataflow, and no cloud-managed object storage replacing self-managed MinIO). Every storage engine, message broker, compute cluster, OLAP warehouse, orchestrator, catalog, secret manager, and observability stack is built and operated from scratch on raw Linux VMs and raw Block Volumes.
 
-The cost policy is local-first, campaign-based, and strictly `$0` out-of-pocket:
+The cost policy is local-first, cloud-reproducible via IaC on raw VMs, and strictly `$0` out-of-pocket:
 
-1. **Local-first on Apple M1 Max (`64 GiB RAM`, `214 GiB` available SSD):** Keep OrbStack and Docker Compose as the primary daily environment (`dev` profile `1–2 GB`), using rolling stage cleanup for the `rubric_100gb` run and `retention.ms=10000` + `lz4` compression for local high-rate burst tests (`0.6–1.2 GB/s` equivalent to `50–100 TB/day`).
-2. **Primary Cloud Target — GCP Free Trial (`$300` Credit / 90 days) with `$0` Out-of-Pocket Guardrails:**
-   - Register with a dedicated personal Gmail and a standard Vietnam Visa/Mastercard Debit card (keep `~50,000 VND` only for the initial `$1` verification hold, then zero out or lock international online limit).
-   - Remain in the **Free Trial** tier (do not upgrade to Pay-As-You-Go unless extra vCPU quota is explicitly required) so automatic card charging is impossible.
-   - Skip Oracle Cloud Free Tier (`VM.Standard.A1.Flex`) due to chronic regional `Out of Host Capacity` errors, 30-day credit expiration, and 4-OCPU/24-GB caps that are weaker than the local M1 Max.
+1. **Local-first on Apple M1 Max (`64 GiB RAM`, `183 GiB` free SSD):** Keep OrbStack (`dev@ubuntu`) and Docker Compose as the primary daily coding environment (`dev` profile `1–2 GB`), using rolling stage cleanup for the `rubric_100gb` run and `retention.ms=10000` + `lz4` compression for local high-rate burst tests.
+2. **Primary Cloud Target — Oracle Cloud Infrastructure (`Tenancy: CloudBigDataPlatform`, `us-phoenix-1`) with `$0` Out-of-Pocket Guardrails & Zero Managed Services:**
+   - Verified active in North America (`us-phoenix-1`), completely bypassing Asia-Pacific `Out of Host Capacity` congestion (`41 OCPUs` and `277 GB RAM` live availability confirmed in `UHSM:PHX-AD-1` via OCI Limits API).
+   - Remain in the **`Free Tier account`** billing state (never click `Upgrade` unless intentionally unlocking PAYG Always Free `4 OCPU / 24 GB` ceiling) so automatic Visa Debit charging is structurally impossible.
+   - **Permanent Always Free Bare-VM Topology (`$0/month` forever after Day 30):**
+     - `UHSM:PHX-AD-1`: `1 × VM.Standard.A1.Flex` (`2 OCPUs / 12 GB RAM` baseline = `1,440 OCPU-hrs/month <= 1,500 limit`, expandable to `4 OCPUs / 24 GB RAM` during Trial or PAYG Always Free; `100–200 GB` raw Boot/Block Volume at `20 VPU` Higher Performance; `2–4 Gbps` NIC) with `ZRAM (zstd 50%)` and `Smart Auto-Yield Keepalive` (releases 100% RAM/CPU when platform containers run, holds `22%` only when idle to prevent 7-day reclamation). Runs self-managed K3s and the core stateful/stateless data platform pods (`MinIO`, `PostgreSQL 16`, `Kafka`, `Flink`, `Spark`, `ClickHouse`, `Airflow 3`, `DataHub`).
+     - `UHSM:PHX-AD-2`: `2 × VM.Standard.E2.1.Micro` (Always Free AMD raw Linux VMs verified in `AD-2`) dedicated to self-managed Edge NGINX TLS Gateway, HashiCorp Vault, and Prometheus/Grafana/Loki monitoring.
+     - Raw Always Free Storage & Network Primitives: `200 GB` raw Block Storage (`20 VPU`) mounted directly to Linux VMs for MinIO/PostgreSQL/ClickHouse PVs + `10 TB/month` outbound egress. (Cloud-managed DBs and managed object buckets are intentionally unused).
 3. **Strict Corporate Cloud Isolation:** Never provision VMs, networks, or coursework resources on the corporate Azure subscription (`NAric@ashleyfurniture.com` / `DATAWAREHOUSE PROD` `8e606065-9e63-4319-ba39-0ff434c72b39`, `CostCenter 5720`), which has `0` ARM control-plane permissions and is strictly reserved for company data-plane work.
-4. **Ephemeral Hyperscale Burst Raid (Novel Idea #1 — `1/5 to 1/3 PB/day` / `2.3–3.8 GB/s`):**
-   - Use Terraform (`terraform/hyperscale-burst/`) to spin up an ephemeral cluster of GCP Spot VMs + Local NVMe SSD (or `3–4 × n2-standard-8` within the default 24–32 vCPU trial quota) running Kafka KRaft / Redpanda + Spark/Flink for 15–20 minutes (`~$1.50–$3.00` deducted from the `$300` trial credit).
-   - **Mandatory Cloud Safety Gates:** Place all VMs in a **single GCP Zone** communicating strictly over **Internal Private IP** (`$0.00/GB` network egress), configure `Cloud Billing Budget Alerts` at `$10/$30/$50`, embed a hard OS timer (`sudo shutdown -h +45`) in the Terraform `startup_script`, and run `terraform destroy` immediately after capturing Grafana/Spark/Flink evidence.
+4. **Ephemeral Hyperscale Burst & 3-Node K3s HA Raid (Stage 7.2 `R40` — `200–500 MB/s` sustained, `0.5–1.0 GB/s` peak):**
+   - Use Terraform (`infra/terraform/oci-hyperscale-burst/`) to spin up an ephemeral multi-node `VM.Standard.A1.Flex` cluster (e.g., `3 × 4–8 OCPU` nodes across `PHX-AD-1/2/3` with `4–8 Gbps` NIC per node and `20–120 VPU` Block Volumes) from the `$300` Free Trial credit pool for 30–60 minutes (`~$1–$3` trial credit).
+   - **Mandatory Cloud Safety Gates:** Communicate strictly over the internal VCN private subnet (`10.20.0.0/16`, `$0.00/GB` internal traffic), embed a hard OS timer (`sudo shutdown -h +60`) in cloud-init for burst nodes, and run `terraform destroy` on the ephemeral burst module immediately after capturing Grafana/Spark/Flink/ArgoCD evidence while preserving the permanent `infra/terraform/oci-always-free/` cluster.
 5. Never make a temporary or free-tier cloud resource the only copy of source code, data seeds, or evidence packs.
 
 The deployable artifacts must remain portable across all stages: multi-architecture container images, Compose files, Helm charts, Terraform modules, Ansible roles, migrations, contracts, and runbooks. Moving from OrbStack to a VPS, from a VPS to K3s HA, or from K3s to GKE/EKS changes the infrastructure target; it must not require rewriting the source contracts or business transformations.
@@ -747,3 +793,5 @@ These extensions consume the platform. They do not change the source, contract, 
 | 2026-10-03 | Accepted the lean, production-shaped Commerce Data Foundation Platform direction. |
 | 2026-10-08 | Accepted data-source and simulation research: one commerce domain, owned generator, public datasets as fixtures/adapters, PB/day as a capacity model. |
 | 2026-10-16 | Locked Unified Single-Source Data Engine (`Seed-and-Amplify` across DE/ML/RAG), rolling stage cleanup for `>=100 GB` rubric verification on Apple M1 Max (`214 GiB` available SSD), strict corporate Azure isolation, `$0` GCP Free Trial (`$300` / 90 days) debit-card guardrails, and Ephemeral Spot NVMe Hyperscale Raid (`2.3–3.8 GB/s`, `1/5–1/3 PB/day` equivalent) as Novel Idea #1. |
+| 2026-10-20 | Added enterprise Senior DE capabilities (benchmarked against Home Credit Vietnam IT Data Engineer JD): `dbt` Slim CI (`state:modified+`), Jinja PII masking + DataHub PII tags, custom typed Airflow Operators/Hooks, Legacy DW-to-Lakehouse parallel run & reconciliation inside the WAP gate, and declarative Kubernetes GitOps (`Helm`/`ArgoCD`) manifests. |
+| 2026-10-24 | Provisioned and verified **Oracle Cloud Infrastructure (`Tenancy: CloudBigDataPlatform`, `us-phoenix-1`)** via `oci-cloud` MCP & `oci-cli` (`41 OCPUs / 277 GB RAM` A1.Flex available in `UHSM:PHX-AD-1`, `2 × E2.1.Micro` in `UHSM:PHX-AD-2`, `200 GB` `20-VPU` Raw Block Storage). Promoted OCI `us-phoenix-1` to Primary Cloud Target with a **Strict Zero-Managed-Service Policy (100% Bare-VM Self-Hosted Open-Source)**: only raw IaaS primitives (`VCN`, `Subnet`, `Security List`, raw Ubuntu 24.04 VMs, raw Block Volumes) are provisioned via Terraform (`infra/terraform/oci-always-free/`), while the entire platform stack (`K3s`, `MinIO`, `PostgreSQL 16`, `Kafka`, `Flink`, `Spark`, `Delta/Iceberg UniForm`, `ClickHouse`, `Airflow 3`, `DataHub`, `Vault`, `NGINX`, `Prometheus/Grafana/Loki`, `ArgoCD`) is self-deployed from scratch. |
