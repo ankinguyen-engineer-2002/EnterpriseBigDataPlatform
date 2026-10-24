@@ -56,13 +56,13 @@ flowchart TB
 
         SILVER --> DBT --> GOLD
         GOLD --> WAP
-        LEGACY -.->|Parallel Run Compare:\nrow_count, sum_amount| WAP
-        WAP -->|Delta != 0 (Fail)| ROLLBACK --> GOLD
+        LEGACY -.->|Parallel Run Compare| WAP
+        WAP -->|Fail: Delta != 0| ROLLBACK --> GOLD
     end
 
     subgraph L5["5. OLAP SERVING WAREHOUSE"]
         CH[("ClickHouse OLAP\n• MergeTree / ReplacingMergeTree\n• Primary/Sorting Keys\n• Data Skipping Indexes & Materialized Views")]
-        WAP -->|Delta == 0 (Cutover Pass)| CH
+        WAP -->|Pass: Delta == 0| CH
     end
 
     subgraph L6["6. CONTROL, GOVERNANCE & INFRA/GITOPS PLANE"]

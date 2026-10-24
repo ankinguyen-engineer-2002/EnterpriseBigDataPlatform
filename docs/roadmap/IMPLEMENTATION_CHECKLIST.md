@@ -19,7 +19,7 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
 ---
 
 ## Stage 1 — Container Foundation, Core Storage & Dockerfile Optimization (5 Rubric Points)
-- [ ] **1.1 — Local Compose Foundation (`PostgreSQL 16` + `MinIO`):**
+- [x] **1.1 — Local Compose Foundation (`PostgreSQL 16` + `MinIO`):**
   - Create `.env.example`, `Makefile` (`setup`, `up`, `down`, `ps`, `logs`, `test`), and `docker-compose.yml`.
   - Configure named persistent volumes, custom bridge network, resource limits, and strict `healthcheck` gates.
   - Auto-initialize MinIO lakehouse buckets (`raw`, `bronze`, `silver`, `gold`, `checkpoints`).

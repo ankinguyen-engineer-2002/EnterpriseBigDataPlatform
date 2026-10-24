@@ -93,9 +93,9 @@ flowchart TD
   ├── Bước 8: Viết 'docker-compose.yml' & Bật riêng lẻ PostgreSQL 16 (WAL) + MinIO S3      [✔ Xong]
   ├── Bước 8.1: Nắm vững bộ lệnh vận hành & gỡ lỗi Docker hàng ngày                        [✔ Xong]
   ├── Bước 8.2: Đo Benchmark thực tế trong Linux VM (MinIO 878 MB/s, Postgres 216 MB/s)    [✔ Xong]
-  ├── Bước 9: Viết 'Makefile' chuẩn hóa bảng điều khiển lệnh tắt (make up/down/ps/logs)    ◄── ĐANG Ở ĐÂY
-  ├── Bước 10: Commit & Push mốc hạ tầng lưu trữ cốt lõi lên GitHub
-  └── Bước 11 (R3–R4 | 5đ): Tối ưu Multi-stage Dockerfile (Baseline vs Slim Non-Root, giảm >60% size)
+  ├── Bước 9: Viết 'Makefile' chuẩn hóa bảng điều khiển lệnh tắt (make up/down/ps/logs)    [✔ Xong]
+  ├── Bước 10: Commit & Push mốc hạ tầng lưu trữ cốt lõi lên GitHub                        [✔ Xong]
+  └── Bước 11 (R3–R4 | 5đ): Tối ưu Multi-stage Dockerfile (Baseline vs Slim Non-Root)      ◄── ĐANG Ở ĐÂY
         │
         ▼  [Gate 1: Storage Healthy + Bằng chứng giảm >60% kích thước Docker Image]
 ====================================================================================================
