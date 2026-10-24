@@ -79,6 +79,23 @@ flowchart TB
     DATAHUB -.->|Tracks Lineage| CH
 ```
 
+## Enterprise Data Ecosystem (`Seed-and-Amplify` Unified Engine)
+
+Rather than stitching disconnected public CSVs with mismatched foreign keys, the platform owns a vectorized generator (`commerce-datagen`) seeded with real commerce dictionaries (**Google `theLook` + Brazilian `Olist` Marketplace + `H&M` Product Catalog + `Open CDP` Behavioral Funnel**), producing **13 source tables/streams (165 columns)** with 100% referential integrity and feeding **14 curated Gold tables**:
+
+- **3 Ingestion Channels:**
+  1. **Transactional OLTP & CDC (`FastAPI` → `PostgreSQL 16 WAL` → `Debezium` → `Kafka`):** Live `INSERT/UPDATE` orders, payments, inventory mutations, and `dlq_poison_events` contract isolation.
+  2. **High-Rate Behavioral & Webhook Stream (`Datagen` → `Kafka` → `Apache Flink`):** `clickstream` (injecting **5–10 min mobile late arrivals**) and `payment_callbacks` (injecting **`~1.5%` gateway duplicates**).
+  3. **High-Throughput Historical Bulk (`PyArrow/DuckDB` → `MinIO s3://raw` + `Postgres COPY` → `Apache Spark`):** Generates `>= 100 GB` across 9 relational tables (`customers`, `distribution_centers`, `sellers`, `products`, `inventory_items`, `orders`, `order_items`, `payments`, `order_reviews`) with **80% Ho Chi Minh City / 75% Electronics Skew**, mid-dataset **`payments.failure_reason` Schema Evolution**, and **`~2%` `order_items` Offline Duplicates**.
+- **14 Target Gold Tables (`dbt` + `Delta/Iceberg UniForm` + `ClickHouse`):**
+  - **5 Dimensions (`dim_*`):** `dim_customers` (SCD Type 2 + `SHA-256` PII masking), `dim_products` (SCD Type 2), `dim_sellers`, `dim_distribution_centers`, `dim_date`.
+  - **6 Facts (`fact_*`):** `fact_orders`, `fact_order_items`, `fact_payments`, `fact_inventory_movements`, `fact_clickstream_5m`, `fact_order_reviews`.
+  - **1 One Big Table (`obt_*`):** `obt_commerce_sales_wide`.
+  - **2 Feature & Label Tables:** `feat_customer_order_metrics_90d` (`event_timestamp`, `created_at`) and `label_customer_reorder_7d` (`will_order_in_7d`).
+- **2-Phase Execution & Testing Strategy:**
+  - **Phase A (Incremental Stage Build & Clean):** Test each newly built stage with lightweight `ci`/`dev` fixtures (`50 MB – 1 GB` in seconds), then wipe temporary volumes (`make clean`) to keep local SSD consumption at `0 GB` during development.
+  - **Phase B (Full End-to-End Zero-to-Gold Campaign):** Once all 7 stages are wired together, trigger a clean-slate end-to-end run from `Source` → `CDC/Kafka` → `Flink/Spark` → `Bronze/Silver/Gold` → `WAP Gate` → `ClickHouse` → `Airflow/DataHub/Grafana`, measuring throughput (`MB/s`), latency (`ms`), and wall-clock execution time at every hop.
+
 ## 7-Stage Practical Roadmap
 
 | Stage | Focus | Core Stack | DE Rubric Points |

@@ -552,3 +552,326 @@ git add docker-compose.yml Makefile docs/runbooks/STEP_BY_STEP_BUILD_GUIDE.md
 git commit -m "feat(infra): add PostgreSQL 16 (logical WAL), MinIO S3 Medallion & Makefile"
 git push origin main
 ```
+
+---
+
+## Chặng 2.1: Kiến Trúc Dữ Liệu Toàn Diện (13 Nguồn / 150+ Cột → 14 Bảng Gold) & Đóng Gói Multi-Stage Dockerfile (Stage 1.2 + Stage 2)
+
+### 📌 Toàn cảnh Hệ sinh thái Dữ liệu Nguồn (`Seed-and-Amplify` Unified Data Engine)
+Hệ thống kết hợp 4 nguồn dữ liệu thực tế (**Google `theLook` + Brazilian `Olist` Marketplace + `H&M` Product Catalog + `Open CDP` Behavioral Funnel**), bao gồm **9 bảng OLTP/Marketplace trong PostgreSQL 16** và **4 luồng Streaming/Webhook/DLQ/Legacy**:
+
+| # | Tên bảng / Luồng | Số cột | Các cột chi tiết (Rich Enterprise Columns) | Mục tiêu Kiến trúc & Bẫy lỗi Rubric được cài vào |
+| :---: | :--- | :---: | :--- | :--- |
+| **1** | **`customers`** *(OLTP/CDC + Parquet)* | **18** | `customer_id`, `email`, `phone`, `first_name`, `last_name`, `gender`, `birth_year`, `city`, `state`, `country`, `postal_code`, `latitude`, `longitude`, `traffic_source`, `segment`, `device_type`, `signup_ts`, `updated_ts` | • **SCD Type 2 (`dbt snapshot`):** Theo dõi đổi `segment`, `city`, `email`.<br>• **PII Governance:** Gắn tag PII trên DataHub và băm `SHA-256` ở tầng Gold. |
+| **2** | **`distribution_centers`** *(OLTP/CDC)* | **8** | `dc_id`, `dc_code`, `name`, `region`, `city`, `country`, `latitude`, `longitude` | • **Supply Chain / Logistics (`theLook`):** Mạng lưới kho bãi Bắc – Trung – Nam. |
+| **3** | **`sellers`** *(OLTP/CDC)* | **9** | `seller_id`, `seller_name`, `tax_code`, `city`, `state`, `seller_tier`, `rating_score`, `is_active`, `joined_ts` | • **Marketplace (`Olist`):** Mô hình sàn TMĐT nhiều nhà bán hàng. |
+| **4** | **`products`** *(OLTP/CDC + Parquet)* | **17** | `product_id`, `sku`, `name`, `category`, `subcategory`, `department`, `garment_group`, `brand`, `seller_id`, `default_dc_id`, `cost_price`, `base_price`, `retail_price`, `weight_grams`, `detail_desc`, `is_active`, `created_ts`, `updated_ts` | • **Data Skew #1 (`R6`):** **75%** sản phẩm thuộc `category = 'electronics'`.<br>• **SCD Type 2:** Lịch sử thay đổi giá & trạng thái.<br>• **Real Seed:** Mô tả thật từ `theLook` & `H&M`. |
+| **5** | **`inventory_items`** *(OLTP/CDC + Parquet)* | **9** | `inventory_item_id`, `product_id`, `dc_id`, `batch_lot_no`, `unit_cost`, `stock_status`, `created_ts`, `sold_ts`, `updated_ts` | • **Inventory & COGS (`theLook`):** Theo dõi tồn kho và giá vốn hàng bán. |
+| **6** | **`orders`** *(OLTP/CDC + Parquet)* | **20** | `order_id`, `customer_id`, `status`, `shipping_city`, `shipping_state`, `shipping_country`, `coupon_code`, `item_count`, `subtotal_amount`, `discount_amount`, `shipping_fee`, `tax_amount`, `total_amount`, `currency`, `order_ts`, `approved_ts`, `delivered_carrier_ts`, `delivered_customer_ts`, `estimated_delivery_ts`, `updated_ts` | • **Data Skew #2 (`R6`):** **80%** đơn hàng có `shipping_city = 'Ho Chi Minh City'`.<br>• **SLA Giao hàng (`Olist`):** Đối chiếu ngày giao thực tế và dự kiến. |
+| **7** | **`order_items`** *(OLTP/CDC + Parquet)* | **17** | `order_item_id`, `order_id`, `product_id`, `seller_id`, `inventory_item_id`, `dc_id`, `quantity`, `unit_price`, `cost_price`, `discount_amount`, `tax_amount`, `shipping_share_amount`, `net_line_amount`, `item_status`, `created_ts`, `shipped_ts`, `delivered_ts`, `returned_ts` | • **Offline Duplicates (`R8`):** **~2%** dòng bị nhân bản cùng `order_item_id` nhưng lệch `created_ts` vài giây. |
+| **8** | **`payments`** *(OLTP/CDC + Parquet)* | **15** | `payment_id`, `order_id`, `customer_id`, `payment_sequential`, `method`, `provider`, `installments`, `amount`, `fee_amount`, `currency`, `card_last4`, `status`, `payment_ts`, `updated_ts`, **`failure_reason` *(nullable)*** | • **Schema Evolution (`R7`):** Từ giữa tập dữ liệu xuất hiện cột thứ 15 `failure_reason`.<br>• **Fintech PII:** Cột `card_last4` và `installments`. |
+| **9** | **`order_reviews`** *(OLTP/CDC + Parquet)* | **10** | `review_id`, `order_id`, `customer_id`, `product_id`, `rating_score`, `review_title`, `review_comment`, `sentiment_label`, `created_ts`, `answered_ts` | • **Customer Feedback (`Olist`):** Đánh giá chất lượng sản phẩm/giao hàng. |
+| **10** | **`clickstream`** *(Kafka Topic)* | **14** | `event_id`, `session_id`, `customer_id`, `product_id`, `page_type`, `event_type`, `device_type`, `os`, `browser`, `ip_hash`, `referrer`, `traffic_source`, `event_ts`, `ingest_ts` | • **Late Arrivals (`R9 & R17`):** Sự kiện Mobile đến **trễ 5–10 phút** +乱 thứ tự (`out-of-order`). |
+| **11** | **`payment_callbacks`** *(Kafka Topic)* | **11** | `callback_id`, `payment_id`, `order_id`, `provider`, `result_code`, `gateway_tx_id`, `signature_hash`, `amount`, `currency`, `callback_ts`, `ingest_ts` | • **Streaming Duplicates (`R10 & R18`):** Cổng thanh toán bắn trùng **~1.5%** webhook (`payment_id + result_code`). |
+| **12** | **`dlq_poison_events`** *(Kafka DLQ)* | **9** | `dlq_id`, `source_topic`, `raw_payload`, `error_code`, `error_message`, `schema_version`, `trace_id`, `failed_ts`, `replay_status` | • **Dead-Letter Queue:** Cô lập bản ghi sai hợp đồng dữ liệu (Data Contract). |
+| **13** | **`legacy_daily_revenue_report`** *(SQL)* | **8** | `report_date`, `shipping_city`, `order_count`, `distinct_customers`, `gross_merchandise_value`, `total_discount`, `net_revenue`, `computed_at` | • **Legacy DW Migration Reconciliation (`R39`):** Đối soát lệch 0 đồng ở cổng WAP Stage 7. |
+
+### 📌 Toàn cảnh 14 Bảng Đích ở Tầng Gold (`dbt` + `Delta/Iceberg UniForm` + `ClickHouse`)
+- **5 Bảng Chiều (`dim_*`):** `dim_customers` (SCD Type 2 + PII hashed), `dim_products` (SCD Type 2), `dim_sellers`, `dim_distribution_centers`, `dim_date`.
+- **6 Bảng Sự kiện (`fact_*`):** `fact_orders`, `fact_order_items`, `fact_payments`, `fact_inventory_movements`, `fact_clickstream_5m`, `fact_order_reviews`.
+- **1 Bảng Siêu phẳng (`obt_*`):** `obt_commerce_sales_wide` (phục vụ BI ClickHouse dưới 1 giây).
+- **2 Bảng Feature & Label (`feat_*` / `label_*`):** `feat_customer_order_metrics_90d` (`event_timestamp`, `created_at`) và `label_customer_reorder_7d` (`will_order_in_7d`).
+
+### 📌 3 Nguyên Lý Kiến Trúc Cốt Lõi Của Hệ Sinh Thái Dữ Liệu Nguồn
+
+#### 1. Cơ chế `Seed-and-Amplify` (Tại sao tự gen bằng Tool thay vì tải CSV rời trên Kaggle?)
+- **3 tử huyệt nếu tải 4 bộ CSV rời trên mạng về ghép:** (1) Lệch khóa ngoại (`product_id` H&M, `order_id` Olist và `user_id` Open CDP không khớp nhau $\rightarrow$ `JOIN` ra 0 dòng); (2) Không có sẵn đúng tỷ lệ lỗi của đề bài (`80%` TP.HCM, `75%` Electronics, cột thứ 15 `failure_reason`, `2%` trùng `order_items`); (3) Dữ liệu tĩnh đã "chết", không tự `INSERT/UPDATE` mỗi giây để kích hoạt `Postgres WAL` cho Debezium CDC.
+- **Giải pháp `Seed-and-Amplify`:** Chắt lọc khuôn Schema + bộ từ điển sản phẩm/kho bãi thật (`Seed` vài MB trong repo), sau đó dùng cỗ máy **`commerce-datagen` (`PyArrow` / `DuckDB`)** tự khuếch đại lên **`>= 100 GB`** và bắn Streaming với **100% khóa ngoại khớp nhau xuyên suốt 13 bảng**.
+
+#### 2. Tại sao Doanh nghiệp tách làm 3 Kênh Đẩy Dữ Liệu Song Song (Thay vì ép tất cả qua `FastAPI -> Postgres`)?
+```text
++===================================================================================+
+|         DOCKER IMAGE CỦA BẠN (`edp-app:optimized` - Xây từ Dockerfile)            |
+|  Đóng gói chung bộ code `src/` (gồm Schema 13 bảng, FastAPI & Tool Gen dữ liệu)   |
++===================================================================================+
+        │                                  │                                 │
+        │ [KÊNH 1: ĐƠN HÀNG SỐNG (OLTP)]   │ [KÊNH 2: LỊCH SỬ >= 100 GB]     │ [KÊNH 3: HÀNH VI WEB/APP]
+        │ (Đơn hàng & Tiền bạc cần ACID)   │ (Đổ 500 triệu dòng siêu tốc     │ (Clickstream 50,000 click/s
+        ▼                                  │  không nghẽn cổ chai HTTP)      │  & Payment Webhook trùng 1.5%)
++-------------------------------+          │                                 │
+| Cổng `FastAPI Order Service`  |          │                                 │
+| (Kiểm tra Pydantic Contract)  |          │                                 │
++-------------------------------+          │                                 │
+   │ Hợp lệ              │ Dữ liệu bẩn     │ (Bơm thẳng bằng                 │ (Bắn thẳng vào Kafka —
+   │ (INSERT / UPDATE)   │ (Sai kiểu/giá<0)│  Postgres COPY &                │  CẤM ghi vào Postgres kẻo
+   ▼                     ▼                 ▼  PyArrow Parquet 877 MB/s)      ▼  sập DB đơn hàng chính!)
++---------------------+  +-------------------+  +---------------------+  +-----------------------+
+|   PostgreSQL 16     |  | Kafka DLQ Topic   |  |  MinIO S3 (s3://raw)|  |  Apache Kafka Topics  |
+|  (Sinh nhật ký WAL) |  | (dlq_poison_events|  | (Lưu >=100GB Parquet|  | (clickstream &        |
++---------------------+  |  + s3://raw/dlq/) |  |  có Skew/SchemaEvol)|  |  payment_callbacks)   |
+           │             +-------------------+  +---------------------+  +-----------------------+
+           ▼ (Debezium đọc WAL)                           │                          │
++---------------------+                                   ▼                          ▼
+|  Kafka CDC Topics   | ───────────────────────► [Apache Spark (Stage 4)]   [Apache Flink (Stage 3)]
++---------------------+
+```
+
+#### 3. Chiến lược Vận hành 2 Giai đoạn: "Test Nhỏ & Xóa Theo Từng Chặng" $\rightarrow$ "Mở Van Tổng Duyệt Full Luồng Từ Số 0"
+- **Giai đoạn A (Khi đang xây từ Stage 1 $\rightarrow$ Stage 6):** Xây xong trạm nào chỉ bắn gói test nhỏ (`50 MB – 1 GB`, mất vài giây) để kiểm tra khớp nối của trạm đó rồi **xóa sạch (`make clean`)** để ổ cứng luôn trống và máy mát.
+- **Giai đoạn B (Khi đã nối thông suốt cả 7 Stage):** Reset về 0 và bấm nút chạy **Full Luồng End-to-End (`Zero-to-Gold Campaign`)** để theo dõi trực tiếp dòng dữ liệu chảy từ `FastAPI / Tool Gen` $\rightarrow$ `Postgres WAL / Debezium / Kafka` $\rightarrow$ `Flink & Spark` $\rightarrow$ `MinIO Delta/Iceberg (Raw -> Bronze -> Silver -> Gold)` $\rightarrow$ `dbt` $\rightarrow$ `WAP Gate` $\rightarrow$ `ClickHouse` $\rightarrow$ `Airflow / DataHub / Grafana`, đo tốc độ (`MB/s`), độ trễ (`ms`) và thời gian xử lý từng chặng.
+
+---
+
+### Bước 11: Tối Ưu Hóa Multi-Stage `Dockerfile` (Stage 1.2 — Ăn trọn 5 điểm Rubric `R3–R4`)
+- **Mục tiêu:** Đóng gói ứng dụng Python (`FastAPI Order Service` + `Data Generator`) thành Docker Image và chứng minh kỹ thuật **Multi-stage Build** giúp giảm **>60%–80% dung lượng Image** so với cách viết Dockerfile thông thường, đồng thời chạy bằng tài khoản **`non-root` (`edpuser`)** chuẩn bảo mật doanh nghiệp.
+- **Cơ chế gốc (Tại sao Multi-Stage lại nhẹ hơn gấp 5 lần?):**
+  ```text
+  [Cách 1: Dockerfile.baseline (Single-Stage truyền thống -> ~1.1 GB)]
+  Base Image python:3.11 đầy đủ (900MB) + Trình biên dịch C/C++ gcc + Thư viện + Code
+  ──► Bê NGUYÊN CẢ XƯỞNG XÂY DỰNG (búa, xẻng, rác build) vào Image chạy thật!
+
+  [Cách 2: Dockerfile (Multi-Stage chuẩn Enterprise -> ~180 MB, giảm >80%)]
+  • Tầng 1 (Stage 'builder'): Dùng để tải và biên dịch các thư viện (fastapi, pyarrow, duckdb, psycopg)
+  • Tầng 2 (Stage 'runtime'): Dùng python:3.11-slim-bookworm siêu nhẹ, CHỈ COPY thành phẩm thư viện
+    đã biên dịch từ Tầng 1 sang + tạo user 'edpuser' (non-root) ──► Vứt bỏ hoàn toàn Tầng 1!
+  ```
+
+---
+
+#### Bước 11.1: Tạo danh sách thư viện `requirements.txt` (Nguyên liệu cho Docker)
+- **Bản chất:** Báo cho `pip` biết phải cài đúng 8 thư viện cốt lõi của Data Platform và khóa cứng phiên bản (`==`).
+
+| Dòng khai báo | Thư viện này là gì? | Vai trò cụ thể trong Data Platform |
+| :--- | :--- | :--- |
+| `fastapi==0.115.0` | Framework tạo Web API | Tạo cổng tiếp nhận đơn hàng (`/api/v1/orders`) và khám sức khỏe (`/health`). |
+| `uvicorn[standard]==0.30.6` | Web Server tốc độ cao (ASGI) | Mở cổng mạng `8000` lắng nghe các HTTP request gửi vào `FastAPI`. |
+| `pydantic==2.9.2` | Bộ kiểm duyệt Hợp đồng dữ liệu (Data Contract) | Tự động kiểm tra kiểu dữ liệu & điều kiện (`total_amount > 0`). Sai kiểu là chặn ngay tại cửa! |
+| `psycopg[binary]==3.2.2` | Driver PostgreSQL thế hệ 3 | Cầu nối để code Python bắn lệnh `INSERT / UPDATE / COPY` vào `edp_postgres`. |
+| `pyarrow==17.0.0` | Xử lý dữ liệu cột trên RAM (Apache Arrow) | Giúp Tool Gen đẻ ra `>= 100 GB` file Parquet tốc độ hàng trăm `MB/s` không tràn RAM. |
+| `duckdb==1.1.1` | Động cơ OLAP SQL nhúng trong bộ nhớ | Chạy SQL siêu tốc trên Parquet và đối soát lệch 0 đồng ở cổng kiểm toán **WAP (Stage 7)**. |
+| `boto3==1.35.24` | Bộ SDK chuẩn S3 của AWS | Giúp Python đẩy/kéo file Parquet vào các bucket của `edp_minio` (`raw`, `bronze`, `silver`, `gold`). |
+| `PyYAML==6.0.2` | Bộ đọc file cấu hình `.yaml` | Đọc file kịch bản `generator_config.yaml` (bật/tắt lỗi Skew 80%, Duplicate 2%...). |
+
+```bash
+mkdir -p src/api src/generator
+
+cat << 'EOF' > requirements.txt
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+psycopg[binary]==3.2.2
+pyarrow==17.0.0
+duckdb==1.1.1
+boto3==1.35.24
+PyYAML==6.0.2
+EOF
+
+cat requirements.txt
+```
+
+---
+
+#### Bước 11.2: Tạo ứng dụng `FastAPI` & Hợp đồng dữ liệu `Pydantic` (`src/api/main.py`)
+- **Bản chất Chốt chặn `Pydantic Data Contract` + `DLQ (Dead-Letter Queue)`:**
+  - Khi Dev Backend tự ý sửa dữ liệu nguồn, Trạm gác `Pydantic` tự động phân loại thành **2 kịch bản xử lý thông minh** để hệ thống **không bao giờ sập dây chuyền**:
+    1. **Thêm cột mới không bắt buộc (`Schema Evolution` — VD: thêm cột thứ 15 `failure_reason` ở Rubric `R7`):** Cho qua bình thường, Spark Delta Lake tự động gộp thêm cột mới (`mergeSchema = true`).
+    2. **Đổi tên / Xóa cột bắt buộc hoặc Truyền sai kiểu (`Breaking Change` — VD: đổi `total_amount` thành `price` hoặc truyền số âm `-500`):** `Pydantic` tóm cổ ngay tại cửa, **KHÔNG cho vào `PostgreSQL 16`** mà đóng gói thành "Phong bì cách ly" đẩy sang **DLQ (`Dead-Letter Queue` — Hàng đợi Thư Chết)**.
+  - **Tại sao `DLQ` KHÔNG nằm trong bảng `PostgreSQL` mà phải lưu ở `Kafka Topic (dlq_poison_events)` + `MinIO S3 (s3://raw/dlq/)`?**
+    1. *Bản ghi lỗi có hình thù dị dạng (thiếu khóa chính, chữ nhét vào cột số, JSON rách):* Bảng `PostgreSQL` ép kiểu cứng nên sẽ từ chối không chứa nổi; trong khi `DLQ` lưu toàn bộ xác bản ghi lỗi vào cột chuỗi văn bản `raw_payload` (`STRING`) nên méo mó cỡ nào cũng giữ lại được 100%.
+    2. *Chống bão lỗi (`Poison Pill Storm`):* Nếu đối tác bị lỗi bắn 50,000 đơn rác/giây, đẩy vào `Kafka + MinIO S3` giúp bảo vệ `PostgreSQL 16` không bị nghẽn chết. Sửa code xong chỉ cần bấm **Replay** từ `s3://raw/dlq/` để nạp lại!
+
+```text
+[Đơn hàng lỗi gửi vào: {"order_id": "O1", "total_amount": -500}]  (Vi phạm: tiền < 0!)
+                                │
+                                ▼
+                 +------------------------------+
+                 |  CHỐT CHẶN PYDANTIC CONTRACT |
+                 |  "Tóm được! Tiền âm (-500)"  |
+                 +------------------------------+
+                                │
+        ┌───────────────────────┴────────────────────────┐
+        │ 1. KHÔNG CHO VÀO POSTGRESQL 16                 │ 2. ĐÓNG PHONG BÌ CÁCH LY & ĐẨY VÀO DLQ
+        ▼                                                ▼
+[PostgreSQL 16 an toàn 100%]            +---------------------------------------------------+
+                                        | • Nơi chứa tức thời: Kafka Topic `dlq_poison_events`
+                                        | • Nơi lưu vĩnh viễn: MinIO `s3://raw/dlq/...`     |
+                                        | • Cấu trúc phong bì JSON cách ly:                 |
+                                        |   {                                               |
+                                        |     "dlq_id": "dlq_9981",                         |
+                                        |     "raw_payload": "{\"order_id\":\"O1\",...}",   |
+                                        |     "error_code": "VALUE_ERROR_GT_ZERO",          |
+                                        |     "error_message": "total_amount must be > 0",  |
+                                        |     "failed_ts": "2026-10-24T16:45:00Z"           |
+                                        |   }                                               |
+                                        +---------------------------------------------------+
+```
+
+| Cụm code trong `src/api/main.py` | Ý nghĩa kỹ thuật |
+| :--- | :--- |
+| `app = FastAPI(...)` | Khởi tạo ứng dụng Web API kèm tiêu đề và phiên bản `1.0.0` (tự động sinh trang tài liệu Swagger UI tại `/docs`). |
+| `class OrderCreateContract(BaseModel):` | Định nghĩa **Hợp đồng dữ liệu (Data Contract)** cho đơn hàng: bắt buộc phải có `order_id`, `customer_id`, và `total_amount`. |
+| `Field(..., gt=0)` | Ràng buộc cứng (`greater than 0`): Tổng tiền đơn hàng bắt buộc phải **`> 0`**. Nếu ai truyền tiền âm (`-500`) hoặc chữ (`"abc"`), `Pydantic` lập tức trả mã lỗi `422 Unprocessable Entity` chặn lại ngay! |
+| `@app.get("/health")` | Cổng khám sức khỏe: trả về `"status": "healthy"` kèm giờ chuẩn UTC để Docker `HEALTHCHECK` và Kubernetes biết dịch vụ còn sống. |
+| `@app.post("/api/v1/orders/validate")` | Cổng nhận đơn hàng gửi lên bằng phương thức `POST`, tự động đối chiếu với `OrderCreateContract`. |
+
+```bash
+cat << 'EOF' > src/api/main.py
+import os
+from datetime import datetime, timezone
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+app = FastAPI(
+    title="Enterprise Commerce Data Platform - Ingestion & Order API",
+    version="1.0.0",
+)
+
+
+class OrderCreateContract(BaseModel):
+    order_id: str = Field(..., min_length=3)
+    customer_id: str = Field(..., min_length=3)
+    shipping_city: str = Field(default="Ho Chi Minh City")
+    total_amount: float = Field(..., gt=0)
+    currency: str = Field(default="VND", min_length=3, max_length=3)
+
+
+@app.get("/health")
+def health_check() -> dict:
+    return {
+        "status": "healthy",
+        "service": "edp-order-ingestion-api",
+        "postgres_db": os.getenv("POSTGRES_DB", "commerce_oltp"),
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.post("/api/v1/orders/validate")
+def validate_order_contract(order: OrderCreateContract) -> dict:
+    return {
+        "valid": True,
+        "order_id": order.order_id,
+        "validated_at": datetime.now(timezone.utc).isoformat(),
+    }
+EOF
+
+cat src/api/main.py
+```
+
+---
+
+#### Bước 11.3: Viết, Build & Commit `Dockerfile` Phiên bản 1 — Single-Stage Truyền Thống (Mốc `Before` trên Git)
+- **Bản chất:** Chúng ta chỉ dùng **1 file `Dockerfile` duy nhất** đúng chuẩn công nghiệp (không đẻ thêm file thừa). Ở Bước 11.3 này, ta viết nội dung **Phiên bản 1 (1 tầng truyền thống — nặng `> 1.3 GB`)** vào `Dockerfile`, đóng gói thành Image `edp-app:baseline` và **chốt Git Commit 1 (`Before`)** lên GitHub. Sang Bước 11.4, ta sẽ ghi đè bản **Multi-Stage (2 tầng tối ưu)** vào chính file `Dockerfile` này và chốt **Git Commit 2 (`After`)**!
+
+| Câu lệnh trong `Dockerfile` (Phiên bản 1) | Nó làm gì & Tại sao lại gây phình dung lượng? |
+| :--- | :--- |
+| `FROM python:3.11` | Lấy hệ điều hành Debian đầy đủ kèm sẵn hàng trăm gói công cụ thừa $\rightarrow$ Chưa cài gì đã nặng **~1.0 GB**! |
+| `WORKDIR /app` | Tạo và đứng vào thư mục `/app` bên trong container. |
+| `RUN apt-get update && apt-get install ... gcc build-essential` | Cài trình biên dịch C/C++ (`gcc`) nặng hàng trăm MB chỉ để phục vụ lúc cài thư viện, nhưng cài xong **không xóa đi** mà giữ nguyên trong Image! |
+| `COPY requirements.txt .` & `RUN pip install -r requirements.txt` | Cài 8 thư viện Python và giữ lại cả bộ nhớ đệm (`pip cache`) tốn thêm hàng trăm MB. |
+| `COPY src/ ./src/` | Chép code từ máy vào container (mặc định chạy dưới quyền tối cao **`root`** — nếu hacker chiếm được API là chiếm luôn quyền `root`!). |
+| `CMD ["uvicorn", ...]` | Lệnh khởi chạy máy chủ FastAPI ở cổng `8000` khi bật container. |
+
+```bash
+# 1. Tạo Dockerfile Phiên bản 1 (Single-Stage truyền thống)
+cat << 'EOF' > Dockerfile
+FROM python:3.11
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    libpq-dev \
+    curl
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY src/ ./src/
+
+EXPOSE 8000
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EOF
+
+# 2. Đóng gói bản Baseline (gắn nhãn edp-app:baseline) và xem dung lượng
+sudo docker build -t edp-app:baseline .
+sudo docker images edp-app:baseline
+
+# 3. Chốt Commit Phiên bản 1 (Baseline 'Before') lên GitHub
+git add requirements.txt src/api/main.py Dockerfile README.md docs/
+git commit -m "feat(docker): add baseline single-stage Dockerfile and FastAPI contract service"
+git push origin main
+```
+
+---
+
+#### Bước 11.4: Nâng cấp `Dockerfile` lên Phiên bản 2 — Multi-Stage 2 Tầng, Build & Commit (Mốc `After`)
+- **Bản chất:** Bây giờ ta nâng cấp trực tiếp file `Dockerfile` sang kiến trúc **Multi-Stage (2 tầng: `builder` và `runtime`)**, đóng gói thành Image `edp-app:optimized`, đặt cạnh `edp-app:baseline` để chụp bằng chứng đối chiếu, rồi **chốt Commit Phiên bản 2 (`After`)** lên GitHub!
+
+| Câu lệnh trong `Dockerfile` (Phiên bản 2 Multi-Stage) | Ý nghĩa kỹ thuật ăn điểm Rubric `R3–R4` |
+| :--- | :--- |
+| `FROM python:3.11-slim-bookworm AS builder` | Mở **Tầng 1 (Xưởng xây dựng)** dùng bản `slim` (đã cắt bỏ mọi phần mềm thừa của Linux). |
+| `RUN pip install --no-cache-dir --prefix=/install -r requirements.txt` | Cài đặt toàn bộ 8 thư viện gọn vào thư mục `/install` và tắt lưu rác (`--no-cache-dir`). |
+| `FROM python:3.11-slim-bookworm AS runtime` | Mở **Tầng 2 (Nhà ở thực tế — sạch tinh tươm)**: Bỏ lại toàn bộ Tầng 1 (`gcc`, `libpq-dev`, rác biên dịch) ở phía sau! |
+| `RUN groupadd -g 10001 edpgrp && useradd ... edpuser` | Tạo tài khoản nhân viên thường **`edpuser` (`UID 10001`, không có quyền `root`)** để chạy ứng dụng an toàn tuyệt đối. |
+| `COPY --from=builder /install /usr/local` | **Câu lệnh phép thuật của Multi-stage:** Chỉ bốc đúng thư mục `/install` (chứa 8 thư viện đã biên dịch xong ở Tầng 1) sang Tầng 2! |
+| `USER edpuser` & `HEALTHCHECK ...` | Chuyển hẳn sang quyền `edpuser` và gắn cảm biến tự động khám sức khỏe cổng `/health` mỗi 10 giây. |
+
+```bash
+# 1. Ghi đè nâng cấp Dockerfile sang Phiên bản 2 (Multi-Stage 2 tầng tối ưu)
+cat << 'EOF' > Dockerfile
+# ==========================================
+# STAGE 1: Builder (Xưởng biên dịch thư viện)
+# ==========================================
+FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ==========================================
+# STAGE 2: Runtime (Môi trường chạy thực tế siêu nhẹ)
+# ==========================================
+FROM python:3.11-slim-bookworm AS runtime
+
+WORKDIR /app
+
+# Tạo tài khoản non-root 'edpuser' (UID 10001) để chống leo thang đặc quyền
+RUN groupadd -g 10001 edpgrp && \
+    useradd -u 10001 -g edpgrp -m -s /sbin/nologin edpuser
+
+# Chỉ copy thư viện đã cài đặt từ Stage 1 sang (bỏ lại gcc, apt cache ở Stage 1)
+COPY --from=builder /install /usr/local
+COPY --chown=edpuser:edpgrp src/ ./src/
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app
+
+USER edpuser
+EXPOSE 8000
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')" || exit 1
+
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EOF
+
+# 2. Đóng gói bản Optimized (gắn nhãn edp-app:optimized) và đặt cạnh bản Baseline để so sánh!
+sudo docker build -t edp-app:optimized .
+sudo docker images edp-app
+
+# 3. Xem trực tiếp sự khác biệt (Git Diff) trên cùng 1 file Dockerfile
+git diff Dockerfile
+
+# 4. Chốt Commit Phiên bản 2 (Multi-Stage Optimized 'After') lên GitHub
+git add Dockerfile docs/
+git commit -m "perf(docker): optimize Dockerfile with multi-stage build and non-root runtime"
+git push origin main
+```

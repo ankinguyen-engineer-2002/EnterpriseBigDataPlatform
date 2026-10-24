@@ -347,7 +347,7 @@ stress         stats-only or short-burst (--max-seconds 10 --max-gb 2 hard caps)
 Rather than stitching disconnected datasets across modules, the canonical implementation uses **one unified in-repo data engine (`commerce-datagen`)** that satisfies all three coursework layers (Data Platform, ML Platform, and LLM/Agent Platform) and scores the full **18/100 Rubric points** dedicated to `Implement Data Generator` (12 pts) and `Improve the Data Generator` (6 pts):
 
 1. **Real Catalog & Policy Seed (`~10–50 MB`):** Seeds `products` from real e-commerce catalog descriptions (`theLook` / `H&M articles.csv` `detail_desc`) paired with structured Markdown `FAQ & Shipping/Return Policy` documents. This ensures `product_id`, `customer_id`, and `order_id` link seamlessly across OLTP tables, Feast offline/online features, and the Module 2 RAG vector store without generating meaningless random strings.
-2. **Vectorized Bulk Amplification (`PyArrow` / `DuckDB` / `PySpark`):** Generates `customers`, `products`, `orders`, `order_items`, `payments`, and daily `label` snapshots (`will_order_in_7d`) in `250–500 MB` streaming chunks so the Apple M1 Max (`10 cores, 64 GiB RAM, 214 GiB available SSD`) writes `>= 100 GB` in 3–6 minutes using `< 6 GiB RAM`.
+2. **Vectorized Bulk Amplification (`PyArrow` / `DuckDB` / `PySpark`):** Generates the full **9-table OLTP & Marketplace relational graph (`123 columns`)** plus **4 Streaming, Webhook, DLQ & Legacy DW feeds (`42 columns`)** and daily `label` snapshots (`will_order_in_7d`) in `250–500 MB` streaming chunks so the Apple M1 Max (`10 cores, 64 GiB RAM, 214 GiB available SSD`) writes `>= 100 GB` in 3–6 minutes using `< 6 GiB RAM`.
 3. **Config-Driven Rubric Problem Injection (`generator_config.yaml`):**
    - **Data Skew (Offline):** `80%` of `orders.shipping_city = 'Ho Chi Minh City'`; `75%` of `products.category = 'electronics'`.
    - **Schema Evolution (Offline):** Mid-dataset offset adds nullable string column `failure_reason` to `payments`.
@@ -355,6 +355,32 @@ Rather than stitching disconnected datasets across modules, the canonical implem
    - **SCD Type 2 History:** Controlled price/status/segment mutations producing `valid_from_ts`, `valid_to_ts`, and `is_current`.
    - **Streaming Late Arrivals & Duplicates:** `clickstream` mobile events delayed 5–10 minutes; `~1.5%` of `payment_callbacks` duplicated; configurable **Data Drift** distribution shifts for ML retrain triggers.
 4. **Rolling Stage Cleanup (Protecting the `214 GiB` Local SSD):** During the `rubric_100gb` campaign on the Mac, the pipeline executes stage-by-stage: generate `100 GB` Raw → run Spark DP1 (Raw → Bronze with `ZSTD` dictionary/RLE compression reducing high-skew data to `~25–35 GB`) → capture Spark UI/DataHub evidence and purge temporary `100 GB` Raw before running DP2/DP3 (Bronze → Silver → Gold → Feast). Peak local disk usage never exceeds `~130 GiB`.
+
+#### Canonical Multi-Source Schema Catalog (13 Source Feeds / 150+ Columns → 14 Gold Tables)
+
+Combining **Google `theLook` (OLTP & Logistics)**, **Brazilian `Olist` (Marketplace & SLA)**, **`H&M` (Rich Product Catalog)**, and **`Open CDP` (Behavioral Clickstream)**:
+
+| # | Source Table / Stream | Cols | Key Columns & Grain | Rubric Problem / Enterprise Governance |
+| :---: | :--- | :---: | :--- | :--- |
+| **1** | `customers` *(OLTP/CDC + Parquet)* | 18 | `customer_id`, `email`, `phone`, `first_name`, `last_name`, `gender`, `birth_year`, `city`, `state`, `country`, `postal_code`, `latitude`, `longitude`, `traffic_source`, `segment`, `device_type`, `signup_ts`, `updated_ts` | **SCD Type 2 (`dbt snapshot`)** on `segment`/`city`/`email` + **PII `SHA-256` hashing** on `email`, `phone` |
+| **2** | `distribution_centers` *(OLTP/CDC)* | 8 | `dc_id`, `dc_code`, `name`, `region`, `city`, `country`, `latitude`, `longitude` | Supply chain / warehouse fulfillment network (`theLook`) |
+| **3** | `sellers` *(OLTP/CDC)* | 9 | `seller_id`, `seller_name`, `tax_code`, `city`, `state`, `seller_tier`, `rating_score`, `is_active`, `joined_ts` | Multi-merchant marketplace fulfillment (`Olist`) |
+| **4** | `products` *(OLTP/CDC + Parquet)* | 17 | `product_id`, `sku`, `name`, `category`, `subcategory`, `department`, `garment_group`, `brand`, `seller_id`, `default_dc_id`, `cost_price`, `base_price`, `retail_price`, `weight_grams`, `detail_desc`, `is_active`, `created_ts`, `updated_ts` | **Skew #1 (`R6`):** `75%` `category = 'electronics'` + **SCD Type 2** price/status history + real `H&M`/`theLook` `detail_desc` |
+| **5** | `inventory_items` *(OLTP/CDC + Parquet)* | 9 | `inventory_item_id`, `product_id`, `dc_id`, `batch_lot_no`, `unit_cost`, `stock_status`, `created_ts`, `sold_ts`, `updated_ts` | Stock tracking & COGS gross margin calculation |
+| **6** | `orders` *(OLTP/CDC + Parquet)* | 20 | `order_id`, `customer_id`, `status`, `shipping_city`, `shipping_state`, `shipping_country`, `coupon_code`, `item_count`, `subtotal_amount`, `discount_amount`, `shipping_fee`, `tax_amount`, `total_amount`, `currency`, `order_ts`, `approved_ts`, `delivered_carrier_ts`, `delivered_customer_ts`, `estimated_delivery_ts`, `updated_ts` | **Skew #2 (`R6`):** `80%` `shipping_city = 'Ho Chi Minh City'` + delivery SLA tracking (`Olist`) |
+| **7** | `order_items` *(OLTP/CDC + Parquet)* | 17 | `order_item_id`, `order_id`, `product_id`, `seller_id`, `inventory_item_id`, `dc_id`, `quantity`, `unit_price`, `cost_price`, `discount_amount`, `tax_amount`, `shipping_share_amount`, `net_line_amount`, `item_status`, `created_ts`, `shipped_ts`, `delivered_ts`, `returned_ts` | **Offline Duplicates (`R8`):** `~2%` duplicate `order_item_id` rows with shifted `created_ts` |
+| **8** | `payments` *(OLTP/CDC + Parquet)* | 15 | `payment_id`, `order_id`, `customer_id`, `payment_sequential`, `method`, `provider`, `installments`, `amount`, `fee_amount`, `currency`, `card_last4`, `status`, `payment_ts`, `updated_ts`, **`failure_reason` *(nullable)*** | **Schema Evolution (`R7`):** Mid-dataset addition of 15th column `failure_reason` + **PII `SHA-256`** on `card_last4` |
+| **9** | `order_reviews` *(OLTP/CDC + Parquet)* | 10 | `review_id`, `order_id`, `customer_id`, `product_id`, `rating_score`, `review_title`, `review_comment`, `sentiment_label`, `created_ts`, `answered_ts` | Post-purchase ratings & NLP/RAG review corpus |
+| **10** | `clickstream` *(Kafka Topic)* | 14 | `event_id`, `session_id`, `customer_id`, `product_id`, `page_type`, `event_type`, `device_type`, `os`, `browser`, `ip_hash`, `referrer`, `traffic_source`, `event_ts`, `ingest_ts` | **Late Arrivals (`R9`, `R17`):** Mobile events delayed **5–10 minutes** + out-of-order session sequence |
+| **11** | `payment_callbacks` *(Kafka Topic)* | 11 | `callback_id`, `payment_id`, `order_id`, `provider`, `result_code`, `gateway_tx_id`, `signature_hash`, `amount`, `currency`, `callback_ts`, `ingest_ts` | **Streaming Duplicates (`R10`, `R18`):** `~1.5%` duplicate gateway webhooks (`payment_id + result_code`) |
+| **12** | `dlq_poison_events` *(Kafka DLQ)* | 9 | `dlq_id`, `source_topic`, `raw_payload`, `error_code`, `error_message`, `schema_version`, `trace_id`, `failed_ts`, `replay_status` | Dead-Letter Queue isolating contract/schema violations |
+| **13** | `legacy_daily_revenue_report` *(SQL)* | 8 | `report_date`, `shipping_city`, `order_count`, `distinct_customers`, `gross_merchandise_value`, `total_discount`, `net_revenue`, `computed_at` | Monolithic legacy DW report for Stage 7 **WAP Zero-Copy Reconciliation (`R39`)** |
+
+**Target Gold Layer (14 Curated Tables across `dbt` + `Delta/Iceberg UniForm` + `ClickHouse`):**
+- **5 Dimensions (`dim_*`):** `dim_customers` (SCD Type 2 + PII hashed), `dim_products` (SCD Type 2), `dim_sellers`, `dim_distribution_centers`, `dim_date`.
+- **6 Facts (`fact_*`):** `fact_orders`, `fact_order_items`, `fact_payments`, `fact_inventory_movements`, `fact_clickstream_5m`, `fact_order_reviews`.
+- **1 One Big Table (`obt_*`):** `obt_commerce_sales_wide` (pre-joined denormalized serving table for sub-second BI).
+- **2 Feature & Label Tables (`feat_*` / `label_*`):** `feat_customer_order_metrics_90d` (`event_timestamp`, `created_at` — `R26–R27, R36`) and `label_customer_reorder_7d` (`will_order_in_7d`).
 
 
 

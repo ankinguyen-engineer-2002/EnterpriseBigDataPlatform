@@ -54,18 +54,23 @@ The accepted operational source is a PostgreSQL commerce schema aligned with the
 
 theLook is a Looker/Google synthetic clothing store published as [`bigquery-public-data.thelook_ecommerce`](https://console.cloud.google.com/marketplace/product/bigquery-public-data/thelook-ecommerce). It is regenerated on a daily cadence and is intended for product discovery, testing, and evaluation, not as a production volume feed. Typical analyses work at roughly 100k-scale users and orders; the `events` table is larger than the relational core. A public Kaggle extract of the dataset is on the order of 170 MB, which is enough for schema practice and far too small as a lakehouse volume source.
 
-Canonical tables:
+Canonical tables and streams across the **Unified Single-Source Engine (`commerce-datagen` — 13 Source Feeds / 165 Columns → 14 Gold Tables)**:
 
-| Table | Role |
-|---|---|
-| `users` | Customers and traffic source |
-| `products` | Catalog |
-| `orders` | Order header and status |
-| `order_items` | Line items and sale price |
-| `inventory_items` | Stock, cost, sold-at |
-| `events` | Web/session clickstream |
-| `distribution_centers` | Logistics |
-| `payments` | Added if the product requires it; not in the original seven-table dump |
+| # | Table / Stream | Cols | Role & Domain Shape (`theLook` + `Olist` + `H&M` + `Open CDP`) |
+| :---: | :--- | :---: | :--- |
+| **1** | `customers` | 18 | Customers, traffic source, PII (`email`, `phone`) & SCD Type 2 history |
+| **2** | `distribution_centers` | 8 | Supply chain / warehouse fulfillment network (`theLook`) |
+| **3** | `sellers` | 9 | Multi-merchant marketplace fulfillment (`Olist`) |
+| **4** | `products` | 17 | Catalog (`H&M` / `theLook` real `detail_desc`), **75% `electronics` Skew (`R6`)**, SCD Type 2 |
+| **5** | `inventory_items` | 9 | Stock status, batch lot & COGS unit cost (`theLook`) |
+| **6** | `orders` | 20 | Order header, **80% `Ho Chi Minh City` Skew (`R6`)** & delivery SLA timestamps (`Olist`) |
+| **7** | `order_items` | 17 | Line items, COGS margin & **~2% Offline Duplicates (`R8`)** with shifted `created_ts` |
+| **8** | `payments` | 15 | Payment attempts, installments, PII `card_last4` & mid-dataset **Schema Evolution `failure_reason` (`R7`)** |
+| **9** | `order_reviews` | 10 | Post-purchase ratings (`1..5`), review text & sentiment (`Olist`) |
+| **10** | `clickstream` | 14 | Behavioral web/app funnel (`Open CDP`) with **5–10 min Mobile Late Arrivals (`R9`, `R17`)** |
+| **11** | `payment_callbacks` | 11 | Gateway webhooks with **~1.5% Streaming Duplicates (`R10`, `R18`)** |
+| **12** | `dlq_poison_events` | 9 | Dead-Letter Queue isolating contract/schema violations |
+| **13** | `legacy_daily_revenue_report` | 8 | Monolithic SQL report for Stage 7 **WAP Zero-Copy Migration Reconciliation (`R39`)** |
 
 The production-shaped lab pattern is:
 

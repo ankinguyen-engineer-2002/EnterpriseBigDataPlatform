@@ -31,16 +31,16 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
 ---
 
 ## Stage 2 — Commerce Data Generator (`>= 100 GB` + Stream) & CDC Ingestion (12 Rubric Points)
-- [ ] **2.1 — Enterprise Commerce OLTP Schema & FastAPI Service:**
-  - Create core and extended commerce tables in PostgreSQL (`customers`, `products`, `orders`, `order_items`, `payments`, plus fulfillment/catalog tables) with primary/foreign keys and indexes.
-  - Build FastAPI source service with Pydantic validation and health checks.
+- [ ] **2.1 — Enterprise Commerce OLTP Schema (9 Tables / 123 Columns) & FastAPI Service:**
+  - Create full 9-table OLTP & Marketplace relational schema in PostgreSQL 16 (`customers`, `distribution_centers`, `sellers`, `products`, `inventory_items`, `orders`, `order_items`, `payments`, `order_reviews`) + `legacy_daily_revenue_report` SQL view/table with primary/foreign keys and B-Tree/BRIN indexes.
+  - Build FastAPI source & API collector service with Pydantic schema contract validation, pagination, and health checks.
 - [ ] **2.2 — Offline Data Generator (`R5–R8`: 8 pts):**
-  - Build vectorized `commerce-datagen` (`PyArrow` / `DuckDB`) with `dev` (`1–2 GB`) and `rubric_100gb` (`>= 100 GB` rolling chunked Parquet) profiles.
-  - Inject **Skew** (`80%` `shipping_city = 'Ho Chi Minh City'`, `75%` `category = 'electronics'`), **Schema Evolution** (mid-dataset `payments.failure_reason`), and **Offline Duplicates** (`~2%` `order_items` with shifted `created_ts`).
+  - Build vectorized `commerce-datagen` (`PyArrow` / `DuckDB`) with `ci` (`50 MB`), `dev` (`1–2 GB`), `rubric_100gb` (`>= 100 GB` rolling chunked Parquet), `stream`, and `stress` profiles seeded from real `theLook` / `H&M` catalog descriptions.
+  - Inject **Skew** (`80%` `orders.shipping_city = 'Ho Chi Minh City'`, `75%` `products.category = 'electronics'`), **Schema Evolution** (mid-dataset `payments.failure_reason` 15th column), **Offline Duplicates** (`~2%` `order_items` with shifted `created_ts`), and **SCD Type 2** mutations.
   - Land generated raw files into MinIO/PostgreSQL ready for Bronze ingestion.
 - [ ] **2.3 — Online Streaming Generator, Debezium CDC & Kafka (`R9–R10`: 4 pts):**
-  - Deploy Kafka (KRaft) + Debezium PostgreSQL CDC connector + Dead-Letter Queue (`dlq`).
-  - Stream `clickstream` (injecting **5–10 min Late Arrivals**) and `payment_callbacks` (injecting **`~1.5%` Duplicates**).
+  - Deploy Kafka (KRaft) + Debezium PostgreSQL CDC connector (`pgoutput` WAL) + Dead-Letter Queue (`dlq_poison_events`).
+  - Stream `clickstream` (14 columns, injecting **5–10 min Late Arrivals** & out-of-order events) and `payment_callbacks` (11 columns, injecting **`~1.5%` Duplicates**).
 
 ---
 
@@ -64,11 +64,14 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
 ---
 
 ## Stage 5 — Dimensional Modeling (`dbt`), Slim CI & OLAP Warehouse (`ClickHouse`) (13 Rubric Points)
-- [ ] **5.1 — Gold Dimensional, Feature-Ready Models & dbt Slim CI (`R34–R38`: 10 pts):**
-  - Build `dbt` models structured into `staging/`, `intermediate/`, and `marts/` adhering to naming conventions (`raw_`, `stg_`, `dim_`, `fact_`, `obt_`, `feat_`).
+- [ ] **5.1 — Gold Dimensional (14 Tables), Feature-Ready Models & dbt Slim CI (`R34–R38`: 10 pts):**
+  - Build `dbt` models structured into `staging/`, `intermediate/`, and `marts/` adhering to naming conventions (`raw_`, `stg_`, `dim_`, `fact_`, `obt_`, `feat_`, `label_`):
+    - **5 Dimensions (`dim_*`):** `dim_customers` (SCD Type 2 + PII hashed), `dim_products` (SCD Type 2), `dim_sellers`, `dim_distribution_centers`, `dim_date`.
+    - **6 Facts (`fact_*`):** `fact_orders`, `fact_order_items`, `fact_payments`, `fact_inventory_movements`, `fact_clickstream_5m`, `fact_order_reviews`.
+    - **1 One Big Table (`obt_*`):** `obt_commerce_sales_wide`.
+    - **2 Feature & Label Tables:** `feat_customer_order_metrics_90d` (`event_timestamp`, `created_at`) and `label_customer_reorder_7d` (`will_order_in_7d`).
   - Implement **SCD Type 2** dimensions (`dim_customers`, `dim_products` with `valid_from_ts`, `valid_to_ts`, `is_current`) via `dbt snapshot` and custom Jinja macros for **PII Masking** (`SHA-256` hashing on `email`, `phone`, `card_last4` for non-privileged roles).
   - Configure **dbt Slim CI** (`dbt build --select state:modified+ --defer --state ./prod-run-artifacts`) in `Makefile` and CI workflow using persisted `manifest.json`.
-  - Build SQL feature-ready summary table (`feat_customer_order_metrics_90d` with `event_timestamp` and `created_at`).
   - Export ERD diagram across zones via DBeaver.
 - [ ] **5.2 — ClickHouse Warehouse Optimization (`R21`: 3 pts):**
   - Load Gold tables into ClickHouse (`MergeTree` / `ReplacingMergeTree`).
