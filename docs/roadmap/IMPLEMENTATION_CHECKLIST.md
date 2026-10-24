@@ -24,9 +24,9 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
   - Configure named persistent volumes, custom bridge network, resource limits, and strict `healthcheck` gates.
   - Auto-initialize MinIO lakehouse buckets (`raw`, `bronze`, `silver`, `gold`, `checkpoints`).
   - Verify data durability across container restart and recreation.
-- [ ] **1.2 — Dockerfile Optimization (`R3–R4`: 5 pts):**
-  - Build baseline single-stage `Dockerfile` vs optimized **Multi-stage `Dockerfile`** (`uv`/wheel builder, slim runtime, non-root user).
-  - Record before/after `docker images` size comparison (`>60%` size reduction) in `docs/`.
+- [x] **1.2 — Dockerfile Optimization (`R3–R4`: 5 pts):**
+  - Build baseline single-stage `Dockerfile` vs optimized **Multi-stage `Dockerfile`** (`python:3.11-slim-bookworm` builder + runtime, non-root user `edpuser` `UID 10001`).
+  - Record before/after `docker images` size comparison (`[Verified]`: `edp-app:baseline` `2.32 GB` disk / `637 MB` content $\rightarrow$ `edp-app:optimized` `674 MB` disk / `159 MB` content = **`-71.0%` disk / `-75.0%` content reduction**) in `docs/`.
 
 ---
 
