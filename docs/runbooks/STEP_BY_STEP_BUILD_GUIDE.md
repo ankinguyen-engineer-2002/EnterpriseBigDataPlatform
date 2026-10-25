@@ -1,6 +1,9 @@
-# Step-by-Step Build Guide — Enterprise Commerce Data Platform
+# MultiCloud-Commerce-Lakehouse: Real-Time & Batch Data Platform — From Local Dev to Oracle Cloud Production & Google Cloud Migration
 
-> **Mục tiêu dự án:** Xây dựng Data Platform chuẩn doanh nghiệp (`Kafka, Spark, Flink, Delta Lake, dbt, ClickHouse, Airflow, DataHub`), xử lý `>= 100 GB` Batch và tốc độ `200–500 MB/s` (đỉnh `0.5–1 GB/s`).
+> **Tầm nhìn Kiến trúc & Bối cảnh Thực tế (Banking, Fintech & Enterprise Context):**
+> - **Tại sao `From Local Dev` $\rightarrow$ `to Oracle Cloud Production`?** Trong các Ngân hàng, công ty Tài chính (Fintech) và tập đoàn bán lẻ lớn, dữ liệu giao dịch lõi luôn ưu tiên đặt trên **hạ tầng Oracle** nhờ độ ổn định cao, bảo mật mạng nghiêm ngặt, hiệu năng I/O ổn định và hỗ trợ doanh nghiệp tốt. Dự án này hiện đại hóa mô hình đó bằng cách xây dựng từ con số 0 một **Medallion Lakehouse mã nguồn mở tự vận hành 100% (`PostgreSQL 16 WAL, Debezium CDC, Kafka, Spark, Flink, Delta Lake / Apache Iceberg UniForm, dbt, ClickHouse, Airflow, DataHub`)**, phát triển và giả lập mọi sự cố thực chiến tại **`Local Dev` (`ARM64`)** rồi đẩy tự động qua `Terraform + Ansible + K3s` lên **`Oracle Cloud Production`**.
+> - **Tại sao `Oracle Cloud` $\rightarrow$ `& Google Cloud Migration`?** Bước sang kỷ nguyên **AI, Machine Learning và Data Science**, **Google Cloud (`GCP`)** là nền tảng dẫn đầu thế giới về phân tích nâng cao và AI/ML. Tuy nhiên, các ngân hàng và doanh nghiệp rất ngại dịch chuyển hệ thống vì sợ đứt gãy đường ống hoặc sai lệch số liệu kế toán. Nhờ thiết kế **Độc lập Đám mây (Cloud-Portable)** ngay từ đầu và chốt chặn kiểm toán tự động **WAP Zero-Copy Reconciliation (`Delta = 0`)**, dự án chứng minh năng lực **Di trú Đa Đám Mây từ `Oracle Cloud` sang `Google Cloud`** an toàn tuyệt đối (không lệch 1 đồng doanh thu), tạo bệ phóng dữ liệu chuẩn chỉnh cho các dự án AI/ML/DS tiếp theo trên Google Cloud.
+> - **Báo cáo Khảo sát Thị trường Tuyển dụng DE Việt Nam (2025–2026) & Đối chiếu JD Ngân hàng/Fintech/Siêu App:** Xem chi tiết tại [docs/research/VIETNAM_DE_MARKET_AND_ARCHITECTURE_ALIGNMENT.md](../research/VIETNAM_DE_MARKET_AND_ARCHITECTURE_ALIGNMENT.md).
 
 ---
 
@@ -886,3 +889,292 @@ sudo docker images edp-app
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | **`edp-app:baseline`** *(Single-stage `python:3.11`)* | `f2bcfadd38a9` | **`2.32 GB`** | **`637 MB`** | `root` *(UID 0)* | Mốc đối chứng (`Before`) |
 | **`edp-app:optimized`** *(Multi-stage `slim-bookworm`)* | `3117b5ffbf80` | **`674 MB`** | **`159 MB`** | `edpuser` *(UID 10001)* | **Giảm `1.65 GB` (`-71.0%` Disk) / Giảm `478 MB` (`-75.0%` Content Size — nhẹ gấp 4 lần!)** |
+
+---
+
+#### Bước 11.5: Đồng bộ Tên Repo GitHub, Tài liệu & Thư Mục Local sang `MultiCloud-Commerce-Lakehouse`
+- **1. Đổi tên Repo trên giao diện Web GitHub:**
+  - Mở trang GitHub của dự án $\rightarrow$ Bấm vào tab **`Settings`** (trên thanh menu ngang) $\rightarrow$ Tại ô **`Repository name`**, sửa `EnterpriseBigDataPlatform` thành **`MultiCloud-Commerce-Lakehouse`** $\rightarrow$ Bấm nút **`Rename`**.
+  - Ở trang chính của Repo, bấm biểu tượng bánh răng ⚙️ cạnh mục **`About`** (góc phải trên) $\rightarrow$ Dán dòng mô tả:
+    `Real-Time & Batch Data Platform — From Local Dev to Oracle Cloud Production & Google Cloud Migration`
+- **2. Cập nhật kết nối Git Remote & Push bộ Tài liệu đã đồng bộ tên trong `dev@ubuntu`:**
+```bash
+# Đổi đường dẫn remote sang tên repo mới MultiCloud-Commerce-Lakehouse
+git remote set-url origin git@github.com:ankinguyen-engineer-2002/MultiCloud-Commerce-Lakehouse.git
+git remote -v
+
+# Commit và đẩy toàn bộ tài liệu đã đồng bộ tên mới lên GitHub
+git add README.md src/api/main.py docs/
+git commit -m "docs(rebrand): unify project identity as MultiCloud-Commerce-Lakehouse across all docs"
+git push origin main
+```
+- **3. Đồng bộ tên Thư mục dưới máy Local (`MultiCloud-Commerce-Lakehouse`) mà không làm đứt kết nối IDE hay Linux VM:**
+  - Nếu muốn đổi hẳn tên thư mục vật lý trên Mac sang `MultiCloud-Commerce-Lakehouse` (khi đã đóng cửa sổ IDE hoặc trước khi mở lại):
+```bash
+# Chạy ngoài Terminal của máy Mac (sau khi gõ 'exit' thoát khỏi dev@ubuntu):
+mv /Users/MAC/Documents/EnterpriseDataPlatform_PRJ2026 /Users/MAC/Documents/MultiCloud-Commerce-Lakehouse
+
+# Cập nhật lại đường dẫn nối tắt (Symlink) bên trong máy ảo Linux dev@ubuntu:
+orb -m ubuntu -u dev ln -sfn /Users/MAC/Documents/MultiCloud-Commerce-Lakehouse /home/dev/MultiCloud-Commerce-Lakehouse
+```
+  *(Hoặc nếu đang mở sẵn IDE ở thư mục hiện tại và chưa muốn đóng cửa sổ IDE ngay, bạn chỉ cần chạy `ln -sfn /Users/MAC/Documents/EnterpriseDataPlatform_PRJ2026 /Users/MAC/Documents/MultiCloud-Commerce-Lakehouse` để cả 2 tên đường dẫn cùng trỏ về 1 nơi!).*
+
+---
+
+## Chặng 3 (Stage 2): Xây Dựng Schema OLTP 10 Bảng, Bộ Sinh Dữ Liệu `commerce-datagen` & Luồng CDC/Kafka (12 Điểm Rubric `R5–R10`)
+
+### 📌 Tại sao dùng chung 1 Docker Image (`edp-app:optimized`) cho cả `FastAPI` và `Tool Gen`?
+- Trong `Dockerfile` bạn vừa đóng gói ở Bước 11.4, chúng ta đã cài sẵn cả `fastapi`, `uvicorn` (cho API) LẪN `pyarrow`, `duckdb`, `psycopg`, `boto3`, `PyYAML` (cho Tool Gen) và chép nguyên thư mục `src/` vào Image.
+- Nhờ vậy, **1 Image `edp-app:optimized` (`159 MB`) đóng cả 2 vai**:
+  - Khi chạy lệnh `uvicorn src.api.main:app` $\rightarrow$ Nó là container **FastAPI Order Service**.
+  - Khi chạy lệnh `python -m src.generator.cli` $\rightarrow$ Nó là container **Tool Gen (`commerce-datagen`)**!
+
+---
+
+### Bước 12.1: Tạo Schema SQL 9 Bảng OLTP (123 Cột) + 1 Bảng Đối Soát Legacy (`src/db/init_schema.sql`)
+- **Tại sao phải làm bước này trước khi viết Tool Gen?**
+  - Hiện tại `PostgreSQL 16` mới chỉ là một cái kho trống trơn, chưa có bất kỳ bảng nào. Trước khi Tool Gen bơm dữ liệu vào Database, chúng ta phải xây sẵn **khung 9 bảng giao dịch OLTP (`123 cột`) + 1 bảng báo cáo đối soát `legacy_daily_revenue_report` (`8 cột`)**.
+- **2 Vũ khí kỹ thuật quan trọng trong file `src/db/init_schema.sql`:**
+  1. **Quan hệ Khóa chính – Khóa ngoại (`PRIMARY KEY` & `FOREIGN KEY`) + Chỉ mục (`INDEX`):** Đảm bảo tính toàn vẹn dữ liệu giữa `customers` $\leftrightarrow$ `orders` $\leftrightarrow$ `order_items` $\leftrightarrow$ `products` $\leftrightarrow$ `sellers` $\leftrightarrow$ `distribution_centers` $\leftrightarrow$ `inventory_items` $\leftrightarrow$ `payments` $\leftrightarrow$ `order_reviews`.
+  2. **`ALTER TABLE ... REPLICA IDENTITY FULL;` (Cực kỳ quan trọng cho Debezium CDC!):**
+     - Mặc định khi có lệnh `UPDATE` (ví dụ khách đổi hạng `segment` từ `Regular` lên `VIP`, hoặc sản phẩm đổi giá `base_price`), nhật ký `WAL` của PostgreSQL chỉ ghi giá trị **MỚI (`after`)**, không ghi giá trị **CŨ (`before`)**.
+     - Khi bật `REPLICA IDENTITY FULL`, PostgreSQL bắt buộc ghi **cả trạng thái CŨ (`before`) lẫn trạng thái MỚI (`after`)** vào nhật ký `WAL` $\rightarrow$ Giúp **Debezium CDC** và **dbt SCD Type 2** bắt trọn vẹn lịch sử thay đổi!
+
+```bash
+mkdir -p src/db
+
+cat << 'EOF' > src/db/init_schema.sql
+-- =============================================================================
+-- ENTERPRISE COMMERCE DATA PLATFORM - OLTP & LEGACY DW RECONCILIATION SCHEMA
+-- 9 Relational OLTP Tables (123 Columns) + 1 Legacy Reconciliation Table (8 Columns)
+-- =============================================================================
+
+-- 1. DISTRIBUTION CENTERS (8 columns - Supply Chain / Logistics network)
+CREATE TABLE IF NOT EXISTS distribution_centers (
+    dc_id VARCHAR(32) PRIMARY KEY,
+    dc_code VARCHAR(16) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    region VARCHAR(32) NOT NULL,
+    city VARCHAR(64) NOT NULL,
+    country VARCHAR(64) NOT NULL DEFAULT 'Vietnam',
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL
+);
+
+-- 2. SELLERS (9 columns - Marketplace Merchants)
+CREATE TABLE IF NOT EXISTS sellers (
+    seller_id VARCHAR(32) PRIMARY KEY,
+    seller_name VARCHAR(128) NOT NULL,
+    tax_code VARCHAR(32) NOT NULL,
+    city VARCHAR(64) NOT NULL,
+    state VARCHAR(64) NOT NULL,
+    seller_tier VARCHAR(32) NOT NULL DEFAULT 'Standard',
+    rating_score NUMERIC(3, 2) NOT NULL DEFAULT 4.50,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    joined_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. CUSTOMERS (18 columns - SCD Type 2 & PII Governance target)
+CREATE TABLE IF NOT EXISTS customers (
+    customer_id VARCHAR(32) PRIMARY KEY,
+    email VARCHAR(128) NOT NULL,
+    phone VARCHAR(32) NOT NULL,
+    first_name VARCHAR(64) NOT NULL,
+    last_name VARCHAR(64) NOT NULL,
+    gender VARCHAR(16) NOT NULL,
+    birth_year INTEGER NOT NULL,
+    city VARCHAR(64) NOT NULL,
+    state VARCHAR(64) NOT NULL,
+    country VARCHAR(64) NOT NULL DEFAULT 'Vietnam',
+    postal_code VARCHAR(16) NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    traffic_source VARCHAR(32) NOT NULL,
+    segment VARCHAR(32) NOT NULL DEFAULT 'Regular',
+    device_type VARCHAR(32) NOT NULL,
+    signup_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 4. PRODUCTS (18 columns - 75% 'electronics' Skew & SCD Type 2 target)
+CREATE TABLE IF NOT EXISTS products (
+    product_id VARCHAR(32) PRIMARY KEY,
+    sku VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(256) NOT NULL,
+    category VARCHAR(64) NOT NULL,
+    subcategory VARCHAR(64) NOT NULL,
+    department VARCHAR(64) NOT NULL,
+    garment_group VARCHAR(64) NOT NULL,
+    brand VARCHAR(64) NOT NULL,
+    seller_id VARCHAR(32) NOT NULL REFERENCES sellers(seller_id),
+    default_dc_id VARCHAR(32) NOT NULL REFERENCES distribution_centers(dc_id),
+    cost_price NUMERIC(14, 2) NOT NULL,
+    base_price NUMERIC(14, 2) NOT NULL,
+    retail_price NUMERIC(14, 2) NOT NULL,
+    weight_grams INTEGER NOT NULL DEFAULT 500,
+    detail_desc TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 5. INVENTORY ITEMS (9 columns - Stock & COGS tracking)
+CREATE TABLE IF NOT EXISTS inventory_items (
+    inventory_item_id VARCHAR(32) PRIMARY KEY,
+    product_id VARCHAR(32) NOT NULL REFERENCES products(product_id),
+    dc_id VARCHAR(32) NOT NULL REFERENCES distribution_centers(dc_id),
+    batch_lot_no VARCHAR(32) NOT NULL,
+    unit_cost NUMERIC(14, 2) NOT NULL,
+    stock_status VARCHAR(32) NOT NULL DEFAULT 'available',
+    created_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sold_ts TIMESTAMPTZ,
+    updated_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 6. ORDERS (20 columns - 80% 'Ho Chi Minh City' Skew & SLA timestamps)
+CREATE TABLE IF NOT EXISTS orders (
+    order_id VARCHAR(32) PRIMARY KEY,
+    customer_id VARCHAR(32) NOT NULL REFERENCES customers(customer_id),
+    status VARCHAR(32) NOT NULL,
+    shipping_city VARCHAR(64) NOT NULL,
+    shipping_state VARCHAR(64) NOT NULL,
+    shipping_country VARCHAR(64) NOT NULL DEFAULT 'Vietnam',
+    coupon_code VARCHAR(32),
+    item_count INTEGER NOT NULL DEFAULT 1,
+    subtotal_amount NUMERIC(14, 2) NOT NULL,
+    discount_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    shipping_fee NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    tax_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    total_amount NUMERIC(14, 2) NOT NULL,
+    currency VARCHAR(8) NOT NULL DEFAULT 'VND',
+    order_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    approved_ts TIMESTAMPTZ,
+    delivered_carrier_ts TIMESTAMPTZ,
+    delivered_customer_ts TIMESTAMPTZ,
+    estimated_delivery_ts TIMESTAMPTZ,
+    updated_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 7. ORDER ITEMS (17 columns - ~2% Offline Duplicates target in Parquet)
+CREATE TABLE IF NOT EXISTS order_items (
+    order_item_id VARCHAR(32) PRIMARY KEY,
+    order_id VARCHAR(32) NOT NULL REFERENCES orders(order_id),
+    product_id VARCHAR(32) NOT NULL REFERENCES products(product_id),
+    seller_id VARCHAR(32) NOT NULL REFERENCES sellers(seller_id),
+    inventory_item_id VARCHAR(32) REFERENCES inventory_items(inventory_item_id),
+    dc_id VARCHAR(32) NOT NULL REFERENCES distribution_centers(dc_id),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(14, 2) NOT NULL,
+    cost_price NUMERIC(14, 2) NOT NULL,
+    discount_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    tax_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    shipping_share_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    net_line_amount NUMERIC(14, 2) NOT NULL,
+    item_status VARCHAR(32) NOT NULL DEFAULT 'fulfilled',
+    created_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    shipped_ts TIMESTAMPTZ,
+    delivered_ts TIMESTAMPTZ
+);
+
+-- 8. PAYMENTS (15 columns - Mid-dataset Schema Evolution 'failure_reason' & PII 'card_last4')
+CREATE TABLE IF NOT EXISTS payments (
+    payment_id VARCHAR(32) PRIMARY KEY,
+    order_id VARCHAR(32) NOT NULL REFERENCES orders(order_id),
+    customer_id VARCHAR(32) NOT NULL REFERENCES customers(customer_id),
+    payment_sequential INTEGER NOT NULL DEFAULT 1,
+    method VARCHAR(32) NOT NULL,
+    provider VARCHAR(32) NOT NULL,
+    installments INTEGER NOT NULL DEFAULT 1,
+    amount NUMERIC(14, 2) NOT NULL,
+    fee_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(8) NOT NULL DEFAULT 'VND',
+    card_last4 VARCHAR(4),
+    status VARCHAR(32) NOT NULL,
+    payment_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    failure_reason VARCHAR(128)
+);
+
+-- 9. ORDER REVIEWS (10 columns - Post-purchase satisfaction & NLP feedback)
+CREATE TABLE IF NOT EXISTS order_reviews (
+    review_id VARCHAR(32) PRIMARY KEY,
+    order_id VARCHAR(32) NOT NULL REFERENCES orders(order_id),
+    customer_id VARCHAR(32) NOT NULL REFERENCES customers(customer_id),
+    product_id VARCHAR(32) NOT NULL REFERENCES products(product_id),
+    rating_score INTEGER NOT NULL CHECK (rating_score BETWEEN 1 AND 5),
+    review_title VARCHAR(128) NOT NULL,
+    review_comment TEXT NOT NULL,
+    sentiment_label VARCHAR(16) NOT NULL,
+    created_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    answered_ts TIMESTAMPTZ
+);
+
+-- 10. LEGACY DAILY REVENUE REPORT (8 columns - Stage 7 WAP Zero-Copy Reconciliation target)
+CREATE TABLE IF NOT EXISTS legacy_daily_revenue_report (
+    report_date DATE NOT NULL,
+    shipping_city VARCHAR(64) NOT NULL,
+    order_count BIGINT NOT NULL,
+    distinct_customers BIGINT NOT NULL,
+    gross_merchandise_value NUMERIC(18, 2) NOT NULL,
+    total_discount NUMERIC(18, 2) NOT NULL,
+    net_revenue NUMERIC(18, 2) NOT NULL,
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (report_date, shipping_city)
+);
+
+-- Enable REPLICA IDENTITY FULL for Debezium CDC (captures full before/after row images in WAL)
+ALTER TABLE distribution_centers REPLICA IDENTITY FULL;
+ALTER TABLE sellers REPLICA IDENTITY FULL;
+ALTER TABLE customers REPLICA IDENTITY FULL;
+ALTER TABLE products REPLICA IDENTITY FULL;
+ALTER TABLE inventory_items REPLICA IDENTITY FULL;
+ALTER TABLE orders REPLICA IDENTITY FULL;
+ALTER TABLE order_items REPLICA IDENTITY FULL;
+ALTER TABLE payments REPLICA IDENTITY FULL;
+ALTER TABLE order_reviews REPLICA IDENTITY FULL;
+
+-- Indexes for high-throughput OLTP & analytical reconciliation queries
+CREATE INDEX IF NOT EXISTS idx_orders_customer_ts ON orders(customer_id, order_ts);
+CREATE INDEX IF NOT EXISTS idx_orders_shipping_city ON orders(shipping_city);
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);
+EOF
+```
+
+---
+
+### Bước 12.2: Nạp Schema 10 Bảng vào Container `edp_postgres` & Kiểm chứng `REPLICA IDENTITY FULL`
+- Sau khi tạo xong file `src/db/init_schema.sql`, chúng ta nạp thẳng file SQL này vào container `edp_postgres` đang chạy và kiểm tra xem:
+  1. Đủ **10 bảng (`131 cột`)** đã được tạo chưa?
+  2. Thuộc tính `relreplident` trong bảng hệ thống `pg_class` của 9 bảng OLTP đã chuyển sang **`f` (`FULL`)** để sẵn sàng cho **Debezium CDC** chưa?
+
+```bash
+# 1. Đảm bảo container PostgreSQL 16 & MinIO đang chạy
+make up
+
+# 2. Nạp file init_schema.sql vào PostgreSQL 16
+sudo docker exec -i edp_postgres psql -U edp_user -d edp_oltp < src/db/init_schema.sql
+
+# 3. Kiểm chứng 10 bảng, tổng số cột của từng bảng và trạng thái REPLICA IDENTITY (f = FULL)
+sudo docker exec -i edp_postgres psql -U edp_user -d edp_oltp -c "
+SELECT
+    c.relname AS table_name,
+    COUNT(a.attname) AS column_count,
+    CASE c.relreplident
+        WHEN 'f' THEN 'FULL (CDC Ready)'
+        WHEN 'd' THEN 'DEFAULT (PK Only)'
+        ELSE c.relreplident::text
+    END AS replica_identity
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+WHERE n.nspname = 'public' AND c.relkind = 'r'
+GROUP BY c.relname, c.relreplident
+ORDER BY table_name;
+"
+```
+- **Tiêu chuẩn Nghiệm thu (`Exit Criteria`):**
+  - Bảng kết quả in ra đúng **10 bảng** (`customers` 18 cột, `distribution_centers` 8 cột, `inventory_items` 9 cột, `legacy_daily_revenue_report` 8 cột, `order_items` 17 cột, `order_reviews` 10 cột, `orders` 20 cột, `payments` 15 cột, `products` 18 cột, `sellers` 9 cột $\rightarrow$ tổng cộng **`131 cột`** trong PostgreSQL).
+  - Cả 9 bảng giao dịch OLTP đều hiển thị **`FULL (CDC Ready)`**.
+

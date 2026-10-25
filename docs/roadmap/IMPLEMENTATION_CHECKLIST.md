@@ -1,6 +1,6 @@
-# Implementation Checklist — Enterprise Commerce Data Platform
+# MultiCloud-Commerce-Lakehouse: Real-Time & Batch Data Platform — From Local Dev to Oracle Cloud Production & Google Cloud Migration (Implementation Checklist)
 
-This is the execution checklist for the **Enterprise Commerce Data Platform** (100% Pure Data Engineering scope, 100/100 DE Rubric points).
+This is the 7-stage execution checklist for **`MultiCloud-Commerce-Lakehouse`** (100% Pure Data Engineering scope, 100/100 DE Rubric points).
 
 ## Status Legend
 - `[ ]` Not started
@@ -91,8 +91,9 @@ This is the execution checklist for the **Enterprise Commerce Data Platform** (1
 
 ---
 
-## Stage 7 — Enterprise Operations, Migration Reconciliation, Cloud IaC & 2 Novel Ideas (20 Rubric Points)
+## Stage 7 — Enterprise Operations, Migration Reconciliation, Multi-Cloud IaC & 2 Novel Ideas (20 Rubric Points)
 - [ ] **7.1 — Novel Idea #1 (`R39`: 10 pts):** **Write-Audit-Publish (WAP) Zero-Copy Quality Gate & Legacy DW Migration Reconciliation** using DuckDB/PyArrow + Delta Lake Time Travel to run parallel reconciliation (`row_count`, `sum_gross_amount`, `distinct_customers`) against a simulated Legacy SQL monolithic report (`legacy_daily_revenue_report`), blocking invalid cutovers and auto-rolling back via `RESTORE TABLE` before ClickHouse publication.
-- [ ] **7.2 — Novel Idea #2 (`R40`: 10 pts):** **Sustained Throughput & Time-Compressed Soak Benchmark (`200–500 MB/s` sustained, `0.5–1.0 GB/s` peak) + Full Enterprise OCI Cloud IaC Promotion:**
-  - Promote the local M1 Max platform to **Oracle Cloud (`CloudBigDataPlatform`, `us-phoenix-1`)** using production Infrastructure-as-Code (`infra/terraform/oci-always-free/` & `oci-hyperscale-burst/`, `Ansible` OS/kernel/K3s bootstrap, `Helm` + `ArgoCD` declarative GitOps).
-  - Deploy edge `NGINX` Gateway, `HashiCorp Vault`, and `Prometheus/Grafana/Loki` observability across `PHX-AD-1` (`VM.Standard.A1.Flex` ARM64) and `PHX-AD-2` (`2 × VM.Standard.E2.1.Micro`), run the high-rate soak/burst benchmark with automated compaction/TTL maintenance, and keep the Always Free cluster running permanently at `$0/month`.
+- [ ] **7.2 — Novel Idea #2 (`R40`: 10 pts):** **Sustained Throughput & Time-Compressed Soak Benchmark (`200–500 MB/s` sustained, `0.5–1.0 GB/s` peak) + Multi-Cloud IaC Progression (`From Local Dev to Oracle Cloud Production & Google Cloud Migration`):**
+  - Promote the local M1 Max platform to **Oracle Cloud Production (`CloudBigDataPlatform`, `us-phoenix-1`)** using production Infrastructure-as-Code (`infra/terraform/oci-always-free/` & `oci-hyperscale-burst/`, `Ansible` OS/kernel/K3s bootstrap, `Helm` + `ArgoCD` declarative GitOps).
+  - Deploy edge `NGINX` Gateway, `HashiCorp Vault`, and `Prometheus/Grafana/Loki` observability across `PHX-AD-1` (`VM.Standard.A1.Flex` ARM64) and `PHX-AD-2` (`2 × VM.Standard.E2.1.Micro`), run the high-rate soak/burst benchmark with automated compaction/TTL maintenance, and keep the Always Free core cluster running permanently at `$0/month`.
+  - Execute the **Google Cloud Migration Drill (`Oracle Cloud → Google Cloud`):** Provision an ephemeral Google Cloud target environment via Terraform, replicate curated Gold Lakehouse tables (`dim_`, `fact_`, `obt_`, `feat_`, `Delta/Iceberg UniForm`) from Oracle Cloud to Google Cloud, verify zero discrepancy (`Delta = 0`) via the WAP Reconciliation Gate, and `terraform destroy` the ephemeral Google Cloud test nodes.

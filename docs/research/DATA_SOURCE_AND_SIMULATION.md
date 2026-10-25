@@ -1,8 +1,8 @@
-# Data Source and Simulation Research
+# MultiCloud-Commerce-Lakehouse: Real-Time & Batch Data Platform — From Local Dev to Oracle Cloud Production & Google Cloud Migration (Data Source & Simulation Research)
 
 ## Purpose
 
-This document records where data for the Commerce Data Foundation Platform comes from, how those sources were found, and how volume, messiness, and streaming behavior are simulated without pretending that a laptop processed petabytes. It is research evidence for the accepted catalog in [PROJECT_SOLUTION.md](../architecture/PROJECT_SOLUTION.md). It does not change the architecture, domain, or technology path.
+This document records where data for **`MultiCloud-Commerce-Lakehouse`** comes from, how those sources were found, and how volume, messiness, and streaming behavior are simulated without pretending that a laptop processed petabytes. It is research evidence for the accepted catalog in [PROJECT_SOLUTION.md](../architecture/PROJECT_SOLUTION.md). It does not change the architecture, domain, or technology path.
 
 The question this file answers is not "which public dump is biggest." The question is: how does one person prove a production-shaped data platform when real company streams are unavailable, public commerce snapshots are small, and PB/day is a capacity model rather than a personal-lab SLA.
 

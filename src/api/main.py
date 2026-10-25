@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 app = FastAPI(
-    title="Enterprise Commerce Data Platform - Ingestion & Order API",
+    title="MultiCloud-Commerce-Lakehouse - Ingestion & Order API",
     version="1.0.0",
 )
 

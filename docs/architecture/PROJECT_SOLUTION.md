@@ -1,8 +1,8 @@
-# Commerce Data Foundation Platform
+# MultiCloud-Commerce-Lakehouse: Real-Time & Batch Data Platform — From Local Dev to Oracle Cloud Production & Google Cloud Migration
 
 **Status:** Accepted project direction  
-**Scope:** Data Engineering and analytics platform first; ML and LLM are future consumers  
-**Primary domain:** Commerce operations and customer activity  
+**Scope:** 100% Pure Data Engineering & Multi-Cloud Lakehouse platform (`From Local Dev to Oracle Cloud Production & Google Cloud Migration`); ML and LLM are future downstream consumers  
+**Primary domain:** E-Commerce operations, Fintech payment governance, and real-time customer activity  
 **Decision owner:** Project owner  
 **Change rule:** Update this document when an architectural decision changes. Do not maintain a competing architecture in another file.
 
@@ -555,6 +555,19 @@ Airflow 3
 ```
 
 Terraform owns raw infrastructure boundaries (Network, VMs, Block Volumes). Ansible owns host OS and self-managed K3s cluster bootstrapping. Helm/ArgoCD and operators own Kubernetes stateful/stateless applications. CI/CD owns application release. Airflow owns data execution. **Strict Zero-Managed-Service Rule:** The project intentionally rejects managed cloud PaaS/SaaS ("instant-noodle" services such as OKE, GKE, EKS, Autonomous Database, RDS, Cloud SQL, Confluent/MSK, Dataproc, BigQuery, or managed S3/GCS replacing MinIO). Every single engine in the stack is self-deployed, self-configured, and self-operated on raw Linux VMs and raw Block Volumes.
+
+#### Multi-Cloud Networking, Firewall & IAM Cross-Reference (`infra/terraform/oci-always-free/main.tf`)
+
+All raw infrastructure primitives provisioned by Terraform on Oracle Cloud (`us-phoenix-1`) map 1:1 to standard enterprise JD terminology across GCP, AWS, and Azure:
+
+| Infrastructure Primitive | Google Cloud (GCP) | AWS | Azure | Oracle Cloud (OCI) — *Implemented in `main.tf`* | Architectural Role |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Virtual Network** | `VPC` | `VPC` | `VNet` | **`VCN` (`oci_core_vcn`)** | Isolated private network (`10.20.0.0/16`) |
+| **Sub-network** | `Subnet` | `Subnet` | `Subnet` | **`Subnet` (`oci_core_subnet`)** | Segmented CIDR (`10.20.1.0/24`) hosting compute VNICs |
+| **Gateway & Routing** | `Cloud Router / IGW` | `Internet Gateway + Route Table` | `VNet Gateway + Route Table` | **`Internet Gateway + Route Table`** | Default route (`0.0.0.0/0`) and internal VCN routing |
+| **Network Firewall** | `VPC Firewall Rules` | `Security Group (SG)` | `NSG` | **`Security List` (`oci_core_security_list`)** | Stateful packet filter (allows ports `22`, `80`, `443` + `10.20.0.0/16` internal) |
+| **Identity & Access (IAM)** | `Cloud IAM + Project` | `IAM (Roles / Policies)` | `Entra ID + Resource Group` | **`OCI IAM + Tenancy / Compartment`** | Resource isolation (`tenancy_ocid`, `compartment_ocid`) and API signing keys |
+| **Persistent Block Storage** | `Persistent Disk` | `EBS Volume` | `Managed Disk` | **`Block Volume` (`20 VPU`)** | Raw block disks attached to Ubuntu VMs for `Postgres`, `MinIO`, and `ClickHouse` PVs |
 
 The deployment progression is:
 
