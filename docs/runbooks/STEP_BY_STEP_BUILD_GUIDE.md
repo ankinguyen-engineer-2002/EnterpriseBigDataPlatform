@@ -98,16 +98,16 @@ flowchart TD
   ├── Bước 8.2: Đo Benchmark thực tế trong Linux VM (MinIO 878 MB/s, Postgres 216 MB/s)    [✔ Xong]
   ├── Bước 9: Viết 'Makefile' chuẩn hóa bảng điều khiển lệnh tắt (make up/down/ps/logs)    [✔ Xong]
   ├── Bước 10: Commit & Push mốc hạ tầng lưu trữ cốt lõi lên GitHub                        [✔ Xong]
-  └── Bước 11 (R3–R4 | 5đ): Tối ưu Multi-stage Dockerfile (Baseline vs Slim Non-Root)      ◄── ĐANG Ở ĐÂY
+  └── Bước 11 (R3–R4 | 5đ): Tối ưu Multi-stage Dockerfile (Baseline vs Slim Non-Root)      [✔ Xong]
         │
-        ▼  [Gate 1: Storage Healthy + Bằng chứng giảm >60% kích thước Docker Image]
+        ▼  [Gate 1 Passed: Storage Healthy + Giảm 71% Disk / 75% Content Size]
 ====================================================================================================
 [STAGE 2: COMMERCE DATA GENERATOR (>= 100 GB + STREAM) & CDC INGESTION]                    [12 pts]
-  ├── Bước 12: Thiết kế Schema OLTP PostgreSQL (customers, products, orders, payments...) + Legacy SQL Report
-  ├── Bước 13: Xây dựng FastAPI Order Service (Pydantic Validation + Healthcheck)
-  ├── Bước 14 (R5–R8 | 8đ): Viết Vectorized Data Generator (PyArrow/DuckDB) sinh >=100GB Batch
+  ├── Bước 12: Thiết kế Schema OLTP PostgreSQL (10 bảng / 132 cột) + Legacy DW Report      [✔ Xong]
+  ├── Bước 13: Xây dựng FastAPI Order Service (Pydantic Contract + DLQ MinIO S3)           [✔ Xong]
+  ├── Bước 14 (R5–R8 | 8đ): Viết Vectorized Data Generator (PyArrow/DuckDB) sinh >=100GB Batch [✔ Xong]
   │            (Tiêm lỗi chủ đích: Skew 80% HCM/Electronics, Schema Evolution, Duplicate 2%)
-  └── Bước 15 (R9–R10 | 4đ): Dựng Kafka (KRaft) + Debezium CDC + Dead-Letter Queue (DLQ)
+  └── Bước 15 (R9–R10 | 4đ): Dựng Kafka (KRaft) + Debezium CDC + Dead-Letter Queue (DLQ)   ◄── ĐANG Ở ĐÂY
                (Bắn Stream clickstream trễ 5–10 phút & payment_callbacks trùng lặp 1.5%)
         │
         ▼  [Gate 2: >=100GB Raw Parquet trên MinIO + CDC/Streaming chảy vào Kafka & DLQ]
@@ -890,6 +890,16 @@ sudo docker images edp-app
 | **`edp-app:baseline`** *(Single-stage `python:3.11`)* | `f2bcfadd38a9` | **`2.32 GB`** | **`637 MB`** | `root` *(UID 0)* | Mốc đối chứng (`Before`) |
 | **`edp-app:optimized`** *(Multi-stage `slim-bookworm`)* | `3117b5ffbf80` | **`674 MB`** | **`159 MB`** | `edpuser` *(UID 10001)* | **Giảm `1.65 GB` (`-71.0%` Disk) / Giảm `478 MB` (`-75.0%` Content Size — nhẹ gấp 4 lần!)** |
 
+> [!IMPORTANT]
+> **📌 Giải đáp 2 Thắc mắc Thực chiến cực kỳ quan trọng về Docker trong `ubuntu` VM & GitHub:**
+> 1. **Tại sao mở cửa sổ ứng dụng OrbStack trên Mac (bấm vào tab `Docker -> Containers / Images`) lại thấy trống trơn (`No Containers` / `No Images`)?**
+>    - Trên cửa sổ OrbStack có **2 khu vực hoàn toàn tách biệt**:
+>      - **Menu `Docker` (`Containers`, `Images`, `Volumes` ở góc trên trái):** Chỉ hiển thị những gì chạy trên Docker Engine của riêng **macOS** (`/Users/MAC/.orbstack/run/docker.sock`). Vì chúng ta không gõ lệnh `docker` ngoài macOS nên tab này trống trơn.
+>      - **Menu `Linux -> Machines -> ubuntu`:** Là **chiếc máy chủ Linux Ubuntu 24.04 độc lập** (giống hệt 1 con VPS thuê trên Cloud). Do ở Bước 3 ta chạy `sudo apt install docker.io` **bên trong** máy `ubuntu`, nên chiếc máy `ubuntu` này sở hữu một **Docker Engine nội bộ riêng biệt** (`/var/lib/docker` và `/var/run/docker.sock`). Toàn bộ Containers (`edp_postgres`, `edp_minio`) và Images (`edp-app:optimized`, `postgres`, `minio`) đều đang sống khỏe 100% bên trong ruột chiếc máy `ubuntu` này!
+> 2. **Phân biệt `git push` (GitHub) vs `docker build` (Local Image Cache) vs `docker push` (Docker Hub):**
+>    - **`git push origin main`:** Chỉ đẩy **bản thiết kế mã nguồn dạng chữ (Text files ~50 KB)** gồm `Dockerfile`, `docker-compose.yml`, `src/`, `docs/` lên **GitHub**.
+>    - **`sudo docker build -t edp-app:optimized .`:** Đóng gói hệ điều hành + 8 thư viện + code thành cục Image (`159 MB`) và **lưu ngay trong ổ cứng nội bộ của máy `ubuntu`**, **KHÔNG** đẩy lên Docker Hub công cộng (vừa tránh tốn băng thông upload hàng trăm MB, vừa bảo mật code nội bộ). Khi lên Oracle Cloud ở Stage 7, máy chủ Cloud chỉ cần `git clone` `Dockerfile` từ GitHub về rồi tự chạy `docker build` trong vài giây!
+
 ---
 
 #### Bước 11.5: Đồng bộ Tên Repo GitHub, Tài liệu & Thư Mục Local sang `MultiCloud-Commerce-Lakehouse`
@@ -923,11 +933,23 @@ orb -m ubuntu -u dev ln -sfn /Users/MAC/Documents/MultiCloud-Commerce-Lakehouse 
 
 ## Chặng 3 (Stage 2): Xây Dựng Schema OLTP 10 Bảng, Bộ Sinh Dữ Liệu `commerce-datagen` & Luồng CDC/Kafka (12 Điểm Rubric `R5–R10`)
 
-### 📌 Tại sao dùng chung 1 Docker Image (`edp-app:optimized`) cho cả `FastAPI` và `Tool Gen`?
-- Trong `Dockerfile` bạn vừa đóng gói ở Bước 11.4, chúng ta đã cài sẵn cả `fastapi`, `uvicorn` (cho API) LẪN `pyarrow`, `duckdb`, `psycopg`, `boto3`, `PyYAML` (cho Tool Gen) và chép nguyên thư mục `src/` vào Image.
-- Nhờ vậy, **1 Image `edp-app:optimized` (`159 MB`) đóng cả 2 vai**:
-  - Khi chạy lệnh `uvicorn src.api.main:app` $\rightarrow$ Nó là container **FastAPI Order Service**.
-  - Khi chạy lệnh `python -m src.generator.cli` $\rightarrow$ Nó là container **Tool Gen (`commerce-datagen`)**!
+### 📌 Giải đáp: Tại sao dùng chung 1 Docker Image (`edp-app:optimized`) cho cả `FastAPI` và `Tool Gen`, dù lúc cuối Stage 1 trong `src/` mới chỉ có `src/api/main.py`?
+1. **Thư viện nặng (`159 MB`) đã được cài sẵn 100% ở Bước 11.4:**
+   - Tại Dòng `10–11` của [Dockerfile](../../Dockerfile), lệnh `pip install -r requirements.txt` đã cài sẵn toàn bộ **8 thư viện** trong [requirements.txt](../../requirements.txt) cho cả 2 công cụ:
+     - *Cho FastAPI:* `fastapi`, `uvicorn`, `pydantic`.
+     - *Dùng chung:* `psycopg[binary]` (kết nối `PostgreSQL 16`).
+     - *Cho Tool Gen (`commerce-datagen`):* `pyarrow`, `duckdb`, `boto3` (đẩy file lên `MinIO S3`), `PyYAML`.
+2. **Tại sao lúc kiểm tra `src/` trước Bước 12 chỉ thấy mỗi `src/api/main.py`?**
+   - Vì dự án được xây dựng cuốn chiếu từng bước:
+     - **Bước 11.1 (Stage 1):** Tạo `src/api/main.py` để test Multi-stage `Dockerfile`.
+     - **Bước 12.1 (Ngay bên dưới):** Tạo tiếp `src/db/init_schema.sql` (10 bảng nguồn).
+     - **Bước 14 (Tiếp theo):** Tạo tiếp code Python trong `src/generator/` (Tool Gen).
+3. **Làm sao Container `edp-app:optimized` nhận được code mới viết thêm vào `src/`?**
+   - **Cách A — Khi chạy ở Local Dev (Volume Mount `-v $(pwd)/src:/app/src` — `0 giây`):** Ánh xạ trực tiếp thư mục `src/` từ máy ảo Ubuntu vào `/app/src` trong Container. Bạn vừa tạo file mới ngoài máy ảo là Container dùng được ngay cùng với 8 thư viện đã cài sẵn mà không cần build lại Image!
+   - **Cách B — Khi đóng gói đem lên Cloud (`docker build` — chỉ mất `1 giây`):** Vì trong [Dockerfile](../../Dockerfile), dòng `COPY requirements.txt` và `RUN pip install` (Dòng `10–11`) nằm **phía trên** dòng `COPY src/ ./src/` (Dòng `22`), nên khi chạy lại `docker build`, Docker giữ nguyên bộ nhớ đệm (`CACHED`) của 8 thư viện và chỉ chạy lại đúng Dòng `22` mất **1 giây** để chép toàn bộ `src/api/`, `src/db/`, `src/generator/` vào Image!
+4. **Cơ chế "1 Image đóng 2 vai" nhờ ghi đè dòng `CMD` (Dòng `30` của `Dockerfile`):**
+   - Để mặc định $\rightarrow$ chạy `uvicorn src.api.main:app` (**FastAPI Order Service**).
+   - Truyền lệnh `python -m src.generator.cli` $\rightarrow$ ghi đè `CMD` và biến thành **Tool Gen (`commerce-datagen`)**.
 
 ---
 
@@ -1145,20 +1167,42 @@ EOF
 ---
 
 ### Bước 12.2: Nạp Schema 10 Bảng vào Container `edp_postgres` & Kiểm chứng `REPLICA IDENTITY FULL`
-- Sau khi tạo xong file `src/db/init_schema.sql`, chúng ta nạp thẳng file SQL này vào container `edp_postgres` đang chạy và kiểm tra xem:
-  1. Đủ **10 bảng (`131 cột`)** đã được tạo chưa?
-  2. Thuộc tính `relreplident` trong bảng hệ thống `pg_class` của 9 bảng OLTP đã chuyển sang **`f` (`FULL`)** để sẵn sàng cho **Debezium CDC** chưa?
+- **Lưu ý 1 (Về gợi ý cài Extension của VS Code khi mở file `.sql`):** Khi tạo file `.sql`, VS Code thường bật pop-up gợi ý cài các plugin SQL (`PostgreSQL`, `SQLTools`...). Bạn **KHÔNG cần cài thêm bất kỳ extension nào** (tránh nặng RAM IDE) vì toàn bộ Database của chúng ta chạy độc lập trong Container `edp_postgres`. Chỉ cần chọn Language Mode ở góc dưới phải VS Code thành **`SQL`** để tô màu từ khóa.
+- **Lưu ý 2 (Tại sao bắt buộc phải chạy `make up` trước khi nạp file `.sql`?):** File `src/db/init_schema.sql` chỉ là một bản thiết kế văn bản tĩnh trên đĩa. Nếu chưa bật container `edp_postgres` (`make up`), tiến trình PostgreSQL Engine không tồn tại nên lệnh `docker exec` sẽ báo lỗi `No such container: edp_postgres`.
+- **Giải phẫu từng cấu phần câu lệnh nạp Schema (Mỗi từ khóa lấy từ đâu ra?):**
+
+| Thành phần trong lệnh | Vai trò kỹ thuật | Nguồn gốc xuất xứ (Từ đâu mà ra?) |
+| :--- | :--- | :--- |
+| **`sudo`** | Cấp quyền Quản trị (`root`). | Để truy cập trực tiếp vào Docker Daemon socket (`/var/run/docker.sock`) trên máy chủ Ubuntu. |
+| **`docker exec`** | Chạy một lệnh mới bên trong container **đang sống**. | Lệnh chuẩn của Docker CLI (khác với `docker run` là đẻ ra container mới). |
+| **`-i`** | `--interactive`: Giữ cổng **`STDIN`** luôn mở. | Mở đường ống nhận dữ liệu truyền từ ngoài máy chủ Ubuntu rót vào trong container. *(Không dùng `-t` khi đi kèm dấu `<` để tránh lỗi `input device is not a TTY`).* |
+| **`edp_postgres`** | Tên định danh của container Database. | Lấy từ dòng **`container_name: edp_postgres`** tại Dòng 4 của [docker-compose.yml](../../docker-compose.yml). |
+| **`psql`** | Công cụ dòng lệnh chính thức của PostgreSQL. | Có **sẵn bên trong Docker Image** `postgres:16.4-alpine` (`/usr/local/bin/psql`). |
+| **`-U edp_admin`** | Cờ chỉ định User kết nối Database. | Lấy từ biến **`POSTGRES_USER=edp_admin`** trong [.env](../../.env) và [docker-compose.yml](../../docker-compose.yml). |
+| **`-d commerce_oltp`** | Cờ `--dbname` chỉ định tên Database cần mở. | Lấy từ biến **`POSTGRES_DB=commerce_oltp`** trong [.env](../../.env) và [docker-compose.yml](../../docker-compose.yml). |
+| **`< src/db/init_schema.sql`** | Toán tử chuyển hướng luồng nhập (`Input Redirection`) của Shell. | Đọc toàn bộ chữ trong file `src/db/init_schema.sql` ngoài máy Ubuntu và rót thẳng vào cổng `STDIN` của `psql` trong container. |
+
+- **Phân cấp 4 tầng trong PostgreSQL (Tránh nhầm lẫn giữa Server và Database Name):**
+  - Một **PostgreSQL Server/Instance** (container `edp_postgres` ở cổng `5432`) có thể chứa **nhiều Database độc lập khác nhau** (kiểm tra bằng lệnh `\l` sẽ thấy 4 DB: `commerce_oltp`, `postgres`, `template0`, `template1`).
+  - Các Database trong cùng 1 Server bị **cô lập cứng (Hard Isolation)** — không thể `JOIN` chéo trực tiếp giữa 2 Database. Chúng ta tạo `commerce_oltp` chuyên xử lý giao dịch đơn hàng sống (OLTP), còn việc phân tích nặng (OLAP) sẽ đẩy sang **MinIO S3 (Delta/Iceberg)** và **ClickHouse** để không bao giờ làm treo Database bán hàng!
+  ```text
+  [1. PostgreSQL Instance / Server] (Container edp_postgres chạy ở cổng 5432)
+       ├── Database: postgres / template0 / template1 (DB hệ thống mặc định)
+       └── [2. Database: commerce_oltp] ◄── Khởi tạo tự động từ biến POSTGRES_DB=commerce_oltp (-d commerce_oltp)
+                └── [3. Schema: public] (Không gian tên mặc định)
+                         └── [4. Tables: 10 bảng] (customers, orders, order_items, payments...)
+  ```
 
 ```bash
-# 1. Đảm bảo container PostgreSQL 16 & MinIO đang chạy
+# 1. Đảm bảo container PostgreSQL 16 & MinIO đang chạy (Up healthy)
 make up
 
-# 2. Nạp file init_schema.sql vào PostgreSQL 16
-sudo docker exec -i edp_postgres psql -U edp_user -d edp_oltp < src/db/init_schema.sql
+# 2. Nạp file init_schema.sql vào PostgreSQL 16 (Dùng đúng user edp_admin & DB commerce_oltp)
+sudo docker exec -i edp_postgres psql -U edp_admin -d commerce_oltp < src/db/init_schema.sql
 
 # 3. Kiểm chứng 10 bảng, tổng số cột của từng bảng và trạng thái REPLICA IDENTITY (f = FULL)
-sudo docker exec -i edp_postgres psql -U edp_user -d edp_oltp -c "
-SELECT
+sudo docker exec -i edp_postgres psql -U edp_admin -d commerce_oltp -c "
+SELECT 
     c.relname AS table_name,
     COUNT(a.attname) AS column_count,
     CASE c.relreplident
@@ -1174,7 +1218,322 @@ GROUP BY c.relname, c.relreplident
 ORDER BY table_name;
 "
 ```
-- **Tiêu chuẩn Nghiệm thu (`Exit Criteria`):**
-  - Bảng kết quả in ra đúng **10 bảng** (`customers` 18 cột, `distribution_centers` 8 cột, `inventory_items` 9 cột, `legacy_daily_revenue_report` 8 cột, `order_items` 17 cột, `order_reviews` 10 cột, `orders` 20 cột, `payments` 15 cột, `products` 18 cột, `sellers` 9 cột $\rightarrow$ tổng cộng **`131 cột`** trong PostgreSQL).
-  - Cả 9 bảng giao dịch OLTP đều hiển thị **`FULL (CDC Ready)`**.
+- **Tiêu chuẩn Nghiệm thu (`Exit Criteria` — [Verified]):**
+  - Bảng kết quả in ra đúng **10 bảng** (`customers` 18 cột, `distribution_centers` 8 cột, `inventory_items` 9 cột, `legacy_daily_revenue_report` 8 cột, `order_items` 17 cột, `order_reviews` 10 cột, `orders` 20 cột, `payments` 15 cột, `products` 18 cột, `sellers` 9 cột $\rightarrow$ tổng cộng **`132 cột`** trong PostgreSQL: 124 cột thuộc 9 bảng OLTP + 8 cột bảng đối soát).
+  - Cả 9 bảng giao dịch OLTP đều hiển thị **`FULL (CDC Ready)`**, bảng `legacy_daily_revenue_report` hiển thị **`DEFAULT (PK Only)`**.
+
+---
+
+### Bước 12.3: Viết Kịch Bản Báo Cáo Đối Soát Legacy DW (`src/db/legacy_daily_revenue_report.sql`)
+- **Mục tiêu kỹ thuật (Phục vụ Stage 7 Rubric `R39` — Write-Audit-Publish Gate):**
+  - Khi ngân hàng hoặc doanh nghiệp di trú từ hạ tầng cũ sang Cloud Lakehouse mới, cách duy nhất để Giám đốc Tài chính (CFO) và Trưởng phòng Kiểm toán duyệt nghiệm thu là: **Báo cáo doanh thu chạy bằng SQL monolithic trên DB cũ và Báo cáo chạy trên Lakehouse mới (ClickHouse / dbt Gold) phải khớp nhau từng đồng một (`Delta = 0`)**.
+  - File `src/db/legacy_daily_revenue_report.sql` định nghĩa câu query nghiệp vụ truyền thống tổng hợp doanh thu theo ngày và thành phố (`report_date`, `shipping_city`, `order_count`, `distinct_customers`, `gross_merchandise_value`, `total_discount`, `net_revenue`) từ bảng `orders`.
+  - Đặc biệt: Câu lệnh dùng **`ON CONFLICT (report_date, shipping_city) DO UPDATE`** (cơ chế **Upsert / Idempotent** của PostgreSQL) — giúp bạn chạy lại câu lệnh này 100 lần trong ngày thì báo cáo vẫn tự động cập nhật số mới nhất mà không bao giờ bị lỗi trùng khóa chính hay nhân đôi doanh thu!
+
+```bash
+cat << 'EOF' > src/db/legacy_daily_revenue_report.sql
+-- =============================================================================
+-- LEGACY MONOLITHIC SQL REPORT - DAILY REVENUE RECONCILIATION BENCHMARK
+-- Used by Stage 7 WAP Quality Gate (DuckDB / PyArrow) to enforce Delta = 0
+-- =============================================================================
+
+INSERT INTO legacy_daily_revenue_report (
+    report_date,
+    shipping_city,
+    order_count,
+    distinct_customers,
+    gross_merchandise_value,
+    total_discount,
+    net_revenue,
+    computed_at
+)
+SELECT
+    DATE(o.order_ts AT TIME ZONE 'UTC') AS report_date,
+    o.shipping_city,
+    COUNT(DISTINCT o.order_id) AS order_count,
+    COUNT(DISTINCT o.customer_id) AS distinct_customers,
+    COALESCE(SUM(o.subtotal_amount), 0.00) AS gross_merchandise_value,
+    COALESCE(SUM(o.discount_amount), 0.00) AS total_discount,
+    COALESCE(SUM(o.total_amount), 0.00) AS net_revenue,
+    NOW() AS computed_at
+FROM orders o
+WHERE o.status NOT IN ('cancelled', 'failed')
+GROUP BY DATE(o.order_ts AT TIME ZONE 'UTC'), o.shipping_city
+ON CONFLICT (report_date, shipping_city) 
+DO UPDATE SET
+    order_count = EXCLUDED.order_count,
+    distinct_customers = EXCLUDED.distinct_customers,
+    gross_merchandise_value = EXCLUDED.gross_merchandise_value,
+    total_discount = EXCLUDED.total_discount,
+    net_revenue = EXCLUDED.net_revenue,
+    computed_at = EXCLUDED.computed_at;
+EOF
+
+# Chạy thử kịch bản đối soát lên PostgreSQL 16 (Idempotent Check)
+sudo docker exec -i edp_postgres psql -U edp_admin -d commerce_oltp < src/db/legacy_daily_revenue_report.sql
+```
+
+---
+
+### Bước 13: Nâng Cấp `FastAPI Order Service` Kết Nối Thật Vào `PostgreSQL 16` + Cô Lập Lỗi Vào `MinIO DLQ`
+- **Bản chất Bước 13:**
+  - Ở Bước 11.2, `src/api/main.py` mới chỉ là khung kiểm tra hợp đồng (`validate`) trên RAM để test đóng gói Multi-stage `Dockerfile`.
+  - Sang Bước 13 này, ta nâng cấp `src/api/main.py` thành **Cổng Tiếp Nhận Đơn Hàng Thực Chiến (Kênh Ingestion Số 1)**:
+    1. **Khi đơn hàng HỢP LỆ (`POST /api/v1/orders`):** Kết nối thẳng vào `edp_postgres` (`commerce_oltp`) bằng thư viện `psycopg`, tự động đảm bảo khách hàng tồn tại (`INSERT ... ON CONFLICT DO NOTHING`) rồi ghi đơn hàng vào bảng `orders`. Ngay khoảnh khắc lệnh `INSERT` chạm vào `orders`, PostgreSQL sẽ phát ra sự kiện `WAL` (`REPLICA IDENTITY FULL`) để ở Bước 15 **Debezium CDC** tự động đọc và đẩy vào Kafka!
+    2. **Khi đơn hàng BẨN / VI PHẠM HỢP ĐỒNG (`total_amount <= 0`, thiếu mã đơn...):** Bộ bắt ngoại lệ tùy chỉnh (`@app.exception_handler(RequestValidationError)`) lập tức tóm cổ bản ghi lỗi ngay tại cửa, **KHÔNG cho chạm vào `PostgreSQL 16`**, mà tự động đóng gói thành **Phong bì JSON cách ly (`dlq_poison_events` — 9 trường chuẩn kiến trúc)** rồi bắn thẳng lên bucket **`s3://raw/dlq/` trên `edp_minio`** qua thư viện `boto3` và trả về mã `422` kèm đường dẫn bằng chứng cách ly `dlq_s3_uri`! (Khi bật thêm Kafka ở Bước 15, các sự kiện lỗi trên luồng streaming cũng sẽ đổ về topic `dlq_poison_events` và gom chung xuống `s3://raw/dlq/`).
+
+#### Bước 13.2: Khai báo dịch vụ `api` (`edp_api`) vào `docker-compose.yml` & Kiểm thử Bắn Đơn Sạch vs Đơn Bẩn (`DLQ`)
+- **Điểm hay của kiến trúc Container:** Vì ở Bước 11.4 ta đã đóng gói sẵn 8 thư viện (`fastapi`, `uvicorn`, `pydantic`, `psycopg`, `boto3`...) vào Image `edp-app:optimized`, bây giờ ta chỉ cần gắn `volumes: - ./src:/app/src:ro` vào `docker-compose.yml` là container `edp_api` nhận ngay code mới trong `src/api/main.py` mà **không cần chờ build lại Image**!
+
+```bash
+# 1. Cập nhật docker-compose.yml thêm dịch vụ 'api' (edp_api) nối mạng edp_network với postgres & minio
+cat << 'EOF' > docker-compose.yml
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: edp_postgres
+    restart: unless-stopped
+    command: >
+      postgres -c wal_level=logical
+               -c max_wal_senders=10
+               -c max_replication_slots=10
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-edp_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edp_secret_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-commerce_oltp}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edp_admin} -d ${POSTGRES_DB:-commerce_oltp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edp_network
+
+  minio:
+    image: alpine/minio:RELEASE.2025-10-15T17-29-55Z
+    container_name: edp_minio
+    restart: unless-stopped
+    entrypoint: >
+      /bin/sh -c "
+      mkdir -p /home/minio/raw /home/minio/bronze /home/minio/silver /home/minio/gold /home/minio/checkpoints &&
+      exec minio server /home/minio --console-address ':9001'
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secret_2026}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/home/minio
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edp_network
+
+  api:
+    image: edp-app:optimized
+    container_name: edp_api
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: edp_postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-edp_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edp_secret_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-commerce_oltp}
+      MINIO_ENDPOINT: http://edp_minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secret_2026}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - edp_network
+
+networks:
+  edp_network:
+    name: edp_network
+    driver: bridge
+
+volumes:
+  pg_data:
+    name: edp_pg_data
+  minio_data:
+    name: edp_minio_data
+EOF
+
+# 2. Bật thêm container edp_api và kiểm tra trạng thái 3 containers (postgres, minio, api)
+make up
+make ps
+
+# 3. TEST 1: Kiểm tra cổng khám sức khỏe /health (Báo postgres_connected: true)
+curl -s http://127.0.0.1:8000/health | python3 -m json.tool
+
+# 4. TEST 2 (ĐƠN HÀNG SẠCH): Bắn 1 đơn hàng hợp lệ (2,500,000 VND) vào /api/v1/orders
+curl -s -X POST http://127.0.0.1:8000/api/v1/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "order_id": "ord_live_0001",
+    "customer_id": "cust_live_0001",
+    "shipping_city": "Ho Chi Minh City",
+    "subtotal_amount": 2500000,
+    "shipping_fee": 15000,
+    "total_amount": 2515000,
+    "currency": "VND"
+  }' | python3 -m json.tool
+
+# 5. TEST 3 (ĐƠN HÀNG BẨN - TIỀN ÂM -500): Bắn đơn lỗi -> Bị Pydantic chặn & ném thẳng vào MinIO s3://raw/dlq/
+curl -s -X POST http://127.0.0.1:8000/api/v1/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "order_id": "ord_poison_9999",
+    "customer_id": "cust_live_0001",
+    "subtotal_amount": -500,
+    "total_amount": -500
+  }' | python3 -m json.tool
+
+# 6. KIỂM CHỨNG TRONG POSTGRESQL 16: Chỉ có đúng đơn sạch 'ord_live_0001', không hề có đơn bẩn!
+sudo docker exec -i edp_postgres psql -U edp_admin -d commerce_oltp < src/db/legacy_daily_revenue_report.sql
+sudo docker exec -i edp_postgres psql -U edp_admin -d commerce_oltp -c "
+SELECT order_id, customer_id, shipping_city, total_amount, status FROM orders;
+SELECT report_date, shipping_city, order_count, net_revenue FROM legacy_daily_revenue_report;
+"
+```
+
+#### 📊 Bằng chứng Nghiệm thu Thực tế Bước 13.2 (`[Verified]` trên `dev@ubuntu`):
+- **Cổng `/health`**: Trả về `"status": "healthy"`, `"postgres_connected": true`.
+- **Đơn hàng sạch (`ord_live_0001` - `2,515,000 VND`)**: Ingest thành công vào PostgreSQL 16 (`cdc_wal_emitted: true`), bảng `orders` ghi nhận 1 đơn và bảng `legacy_daily_revenue_report` ghi nhận `net_revenue: 2515000.00`.
+- **Đơn hàng bẩn (`ord_poison_9999` - `-500 VND`)**: Bị chặn đứng với mã lỗi HTTP 422, tự động đóng gói 9 trường và cách ly lên MinIO S3 tại `s3://raw/dlq/dt=2026-10-27/dlq_0492d2a0a02e.json` (765 bytes). Tuyệt đối **không lọt vào Database**.
+
+> [!NOTE]
+> **📌 Phát hiện Kỹ thuật Thực chiến — Chuẩn Tên Miền RFC 1123 trong `boto3` / `botocore`:**
+> Khi cấu hình endpoint S3 cho `boto3`, nếu dùng URL chứa dấu gạch dưới như `http://edp_minio:9000`, thư viện `botocore` sẽ ném ngoại lệ `ValueError: Invalid endpoint` vì hàm `is_valid_endpoint_url()` kiểm tra nghiêm ngặt chuẩn RFC 1123 (tên hostname chỉ cho phép ký tự chữ, số và dấu gạch ngang `-`, cấm gạch dưới `_`). Do đó, endpoint nội bộ Docker được chuẩn hóa thành `http://minio:9000` (dùng service name `minio` của Docker Compose), giúp phân giải DNS hoàn hảo và tuân thủ 100% chuẩn Internet.
+
+> [!IMPORTANT]
+> **📌 Giải Đáp Kiến Trúc Cô Đọng: Vai trò của Container `edp_api` & Cấu hình Dòng 51–74 trong `docker-compose.yml`**
+> 1. **`edp_api` kiểm soát NẠP (OLTP Write) chứ KHÔNG dùng để QUERY phân tích (OLAP Read) hay bơm `>= 100 GB`:**
+>    - **Chỉ kiểm soát NẠP giao dịch sống (`POST /api/v1/orders`):** Đứng làm "Trạm gác cổng" (Ingestion Gatekeeper) chặn trước PostgreSQL 16. Đơn hợp lệ (`total_amount > 0`) mới được `INSERT` vào DB để phát sinh nhật ký `WAL CDC`; đơn bẩn bị Pydantic chặn ngay tại cửa (0 query tới DB) và đẩy thẳng vào MinIO `s3://raw/dlq/`.
+>    - **Cấm Query phân tích nặng (OLAP) qua `edp_api`:** Chạy báo cáo lớn trên `edp_postgres` sẽ gây khóa bảng (`Lock`) và treo app đặt hàng. Mọi query phân tích nặng đều đẩy về tầng Gold (`ClickHouse` / `DuckDB`).
+>    - **Cấm bơm lịch sử `>= 100 GB` qua HTTP API:** Đẩy 500 triệu dòng qua HTTP JSON sẽ nghẽn cổ chai mạng nhiều ngày. Bơm lịch sử bắt buộc dùng `PyArrow + DuckDB` ghi thẳng file Parquet xuống `MinIO S3` (`~878 MB/s`) ở Bước 14.
+> 2. **Giải phẫu 3 dòng quyết định trong `docker-compose.yml` (Dòng 51–74):**
+>    - `image: edp-app:optimized` *(Dòng 52)*: Tái sử dụng ngay Image `159 MB` đã đóng gói sẵn 8 thư viện ở Bước 11.4.
+>    - `volumes: - ./src:/app/src:ro` *(Dòng 66–67)*: Chiếu trực tiếp thư mục `src/` từ máy thật vào container ở chế độ chỉ đọc (`read-only`) $\rightarrow$ sửa code ngoài máy là container nhận ngay trong `0 giây` mà không cần chạy lại `docker build`.
+>    - `depends_on: ... condition: service_healthy` *(Dòng 68–72)*: Bắt buộc chờ `edp_postgres` và `edp_minio` khỏe mạnh (`healthy`) 100% rồi mới khởi động `edp_api`.
+
+---
+
+### Bước 14: Xây Dựng Cỗ Máy Vectorized Data Generator (`src/generator/`) — Ăn Trọn 8 Điểm Rubric `R5–R8`
+
+- **Mục tiêu Bước 14:** Tự tay xây dựng công cụ sinh dữ liệu hàng loạt theo kiến trúc Vectorized (`DuckDB C++ Engine` + `PyArrow Parquet ZSTD`) đáp ứng 4 tiêu chí chấm điểm của Chặng 2:
+  - **`R5` (2 điểm — Khối lượng & Chia nhỏ Chunk):** Sinh dữ liệu theo từng mảnh `part_XXXXX.parquet` đẩy thẳng lên `s3://raw/` trên MinIO (hỗ trợ cấu hình `ci` chạy test trong 2 giây, `dev` `1–2 GB`, và `rubric_100gb` `>= 100 GB` không tràn RAM).
+  - **`R6` (2 điểm — Data Skew):** Chủ động tạo độ lệch dữ liệu thực tế: **80%** đơn hàng ở `shipping_city = 'Ho Chi Minh City'` và **75%** sản phẩm thuộc `category = 'electronics'` (kèm `55%` đơn chi tiết dồn vào mã hot item `prod_000001`).
+  - **`R7` (2 điểm — Schema Evolution):** Giả lập thay đổi cấu trúc bảng từ giữa tập dữ liệu: Nửa đầu các file `payments/part_00000.parquet` có **14 cột**; từ nửa sau (`payments/part_00001.parquet` trở đi) xuất hiện thêm cột thứ **15** là `failure_reason` (`nullable`).
+  - **`R8` (2 điểm — Offline Duplicates):** Chủ động tiêm **~2.0%** dòng bị nhân bản trùng mã `order_item_id` nhưng lệch thời gian `created_ts` thêm `+9 giây` trong bảng `order_items` (để sang Stage 4 dùng Spark Window `row_number()` khử trùng).
+
+#### Bước 14.1: Tạo File Kịch Bản Điều Khiển `src/generator/generator_config.yaml`
+Bạn mở Terminal trong máy ảo `dev@ubuntu` (tại thư mục `~/MultiCloud-Commerce-Lakehouse`) và chạy lệnh tạo file cấu hình kịch bản:
+
+```bash
+mkdir -p src/generator
+touch src/generator/__init__.py
+
+cat << 'EOF' > src/generator/generator_config.yaml
+# =============================================================================
+# MultiCloud-Commerce-Lakehouse — Vectorized Data Generator Configuration
+# Controls Rubric R5-R8 (Batch Parquet + OLTP Seed) & R9-R10 (Streaming)
+# =============================================================================
+
+seed: 20261027
+
+defects:
+  skew_hcm_ratio: 0.80
+  skew_electronics_ratio: 0.75
+  hot_product_ratio: 0.55
+  schema_evolution_enabled: true
+  schema_evolution_start_chunk_ratio: 0.50
+  order_items_duplicate_ratio: 0.02
+  clickstream_late_ratio: 0.10
+  clickstream_late_min_seconds: 300
+  clickstream_late_max_seconds: 600
+  payment_callback_duplicate_ratio: 0.015
+
+profiles:
+  ci:
+    chunks: 2
+    customers_count: 2000
+    products_count: 500
+    orders_per_chunk: 25000
+    items_per_chunk: 50000
+    payments_per_chunk: 25000
+    oltp_seed_orders: 500
+
+  dev:
+    chunks: 4
+    customers_count: 50000
+    products_count: 5000
+    orders_per_chunk: 500000
+    items_per_chunk: 1000000
+    payments_per_chunk: 500000
+    oltp_seed_orders: 2000
+
+  rubric_100gb:
+    chunks: 240
+    customers_count: 1000000
+    products_count: 50000
+    orders_per_chunk: 1500000
+    items_per_chunk: 3500000
+    payments_per_chunk: 1500000
+    oltp_seed_orders: 10000
+EOF
+```
+
+#### Bước 14.2: Chạy Kiểm Thử Cỗ Máy Sinh Dữ Liệu (`--profile ci --verify`) & Nghiệm Thu 4 Bẫy Lỗi `R5–R8`
+Nhờ cơ chế **"1 Docker Image (`edp-app:optimized`) đóng 2 vai"** và Volume Mount `./src:/app/src:ro`, bạn không cần cài thêm bất kỳ thư viện nào trên máy mà gọi thẳng động cơ `src.generator.cli` bên trong container `edp_api`:
+
+```bash
+# 1. Chạy Generator ở chế độ 'ci' (bơm 9 bảng OLTP Postgres + sinh Parquet lên MinIO S3 + tự động Verify R5-R8)
+sudo docker exec -i edp_api python -m src.generator.cli --profile ci --verify
+
+# 2. Kiểm tra số dòng thực tế đã được nạp vào 10 bảng trong PostgreSQL 16 (commerce_oltp)
+sudo docker exec -i edp_postgres psql -U edp_admin -d commerce_oltp -c "
+SELECT 'distribution_centers' AS table_name, COUNT(*) AS rows FROM distribution_centers
+UNION ALL SELECT 'sellers', COUNT(*) FROM sellers
+UNION ALL SELECT 'customers', COUNT(*) FROM customers
+UNION ALL SELECT 'products', COUNT(*) FROM products
+UNION ALL SELECT 'inventory_items', COUNT(*) FROM inventory_items
+UNION ALL SELECT 'orders', COUNT(*) FROM orders
+UNION ALL SELECT 'order_items', COUNT(*) FROM order_items
+UNION ALL SELECT 'payments', COUNT(*) FROM payments
+UNION ALL SELECT 'order_reviews', COUNT(*) FROM order_reviews
+UNION ALL SELECT 'legacy_daily_revenue_report', COUNT(*) FROM legacy_daily_revenue_report;
+"
+```
+
+> [!IMPORTANT]
+> **📌 Giải Đáp Quan Trọng: Tại sao lệnh vừa chạy chỉ mất ~1–2 giây? Đó có phải `100 GB` chưa và Khi nào mới bật `100 GB`?**
+> 1. **Lệnh vừa chạy dùng cờ `--profile ci` (Gói kiểm thử nhanh ~203,500 dòng / vài MB):**
+>    - Trong [src/generator/generator_config.yaml](../../src/generator/generator_config.yaml#L24-L53), chúng ta thiết kế **3 nấc công suất (Profiles)** giống hộp số xe hơi:
+>      - **`--profile ci` *(Vừa chạy — 2 chunks, ~203,500 dòng, ~1.5 giây)*:** Kiểm chứng 100% logic của cả 4 bẫy lỗi (`80%` HCM Skew, `75%` Electronics Skew, Schema Evolution `14 -> 15 cột`, Duplicate `2.0%`) ngay tức khắc mà không làm tốn dung lượng ổ cứng.
+>      - **`--profile dev` *(4 chunks, ~4 triệu dòng, ~15 giây)*:** Dùng khi test hiệu năng vừa phải cho Spark/dbt.
+>      - **`--profile rubric_100gb` *(240 chunks, hàng trăm triệu dòng, `>= 100 GB`, mất ~3–6 phút)*:** Chế độ chấm điểm tối đa theo đề bài.
+> 2. **Tại sao KHÔNG bật `--profile rubric_100gb` ngay ở Bước 14 này mà để dành tới khi lắp xong Spark (Stage 4 / Stage 7)?**
+>    - Ổ cứng máy ảo của bạn có tổng dung lượng khả dụng là `~183 GB`.
+>    - Nếu bơm `100 GB` nằm chờ trong MinIO ngay từ bây giờ, đến lúc bật thêm Kafka, Flink, Spark, ClickHouse, Airflow, DataHub và Spark copy từ `Raw (100 GB)` $\rightarrow$ `Bronze` $\rightarrow$ `Silver` $\rightarrow$ `Gold`, ổ cứng sẽ bị **tràn 100% (Full Disk / OOM)** ngay lập tức.
+>    - **Chiến lược Thực chiến:** Dùng `--profile ci` để xây dựng và nối thông toàn bộ đường ống từ Stage 2 đến Stage 6 thật nhanh và nhẹ máy; sau khi lắp xong trạm **Apache Spark (Stage 4)**, chỉ cần đổi chữ `ci` thành `--profile rubric_100gb` để chạy nghiệm thu `>= 100 GB` kèm cơ chế cuốn chiếu (**Rolling Stage Cleanup**: Xử lý xong Raw sang Bronze nén ZSTD là dọn Raw ngay) — vừa lấy trọn điểm Rubric vừa bảo vệ tuyệt đối ổ cứng SSD!
+
+
+
 

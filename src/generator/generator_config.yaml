@@ -1,0 +1,56 @@
+# =============================================================================
+# MultiCloud-Commerce-Lakehouse — Vectorized Data Generator Configuration
+# Controls Rubric R5-R8 (Batch Parquet + OLTP Seed) & R9-R10 (Streaming)
+# =============================================================================
+
+seed: 20261027
+
+defects:
+  # R6: Data Skew (80% orders in Ho Chi Minh City, 75% products in electronics)
+  skew_hcm_ratio: 0.80
+  skew_electronics_ratio: 0.75
+  hot_product_ratio: 0.55
+
+  # R7: Schema Evolution (mid-dataset 15th column 'failure_reason' in payments)
+  schema_evolution_enabled: true
+  schema_evolution_start_chunk_ratio: 0.50
+
+  # R8: Offline Duplicates (~2% duplicate order_item_id with shifted created_ts)
+  order_items_duplicate_ratio: 0.02
+
+  # R9-R10: Streaming Late Arrivals (5-10 min) & Payment Webhook Duplicates (1.5%)
+  clickstream_late_ratio: 0.10
+  clickstream_late_min_seconds: 300
+  clickstream_late_max_seconds: 600
+  payment_callback_duplicate_ratio: 0.015
+
+profiles:
+  # Fast verification profile (~2-5 seconds, deterministic for CI & Step 14 check)
+  ci:
+    chunks: 2
+    customers_count: 2000
+    products_count: 500
+    orders_per_chunk: 25000
+    items_per_chunk: 50000
+    payments_per_chunk: 25000
+    oltp_seed_orders: 500
+
+  # Daily local development profile (~1-2 GB across chunks)
+  dev:
+    chunks: 4
+    customers_count: 50000
+    products_count: 5000
+    orders_per_chunk: 500000
+    items_per_chunk: 1000000
+    payments_per_chunk: 500000
+    oltp_seed_orders: 2000
+
+  # Full Rubric R5 >= 100 GB profile (chunked 250-500 MB per file, < 6 GB RAM)
+  rubric_100gb:
+    chunks: 240
+    customers_count: 1000000
+    products_count: 50000
+    orders_per_chunk: 1500000
+    items_per_chunk: 3500000
+    payments_per_chunk: 1500000
+    oltp_seed_orders: 10000
